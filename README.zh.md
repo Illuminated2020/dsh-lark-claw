@@ -23,7 +23,7 @@ kind: "package-library"
 
 ## 使用前准备
 
-- Node.js 20 或更高版本。
+- Node.js `^22.19.0` 或 `>=24.0.0`。
 - dsh 0.1.2-rc.1 或更高版本。
 - 一个已经配置好机器人的飞书/Lark 应用，以及 App ID 和 App Secret。
 - dsh 能使用的模型配置，例如 DEEPSEEK_API_KEY，以及你在 dsh 中使用的 provider 和 model 设置。
@@ -97,9 +97,8 @@ dsh --profile feishu
 
 | 字段 | 说明 |
 | --- | --- |
-| id | Channel 在本地的标识。 |
 | `id` | Channel 在本地的标识。 |
-| `type` | 填 `feishu` 或 `lark`。 |
+| `type` | 填 `feishu` 或 `lark`，选择对应的官方 API 域名。 |
 | `params.app_id` | 飞书/Lark App ID。 |
 | `params.app_secret` | App Secret 明文，或 `$ENV_NAME` 环境变量引用。 |
 | `params.chat_id` | Cron 和主动消息使用的默认会话，可选。 |
@@ -153,7 +152,7 @@ Cron 任务保存在 dsh 的 SQLite storage domain 中，默认文件位于 $DSH
 - pattern：五字段 Cron 表达式，例如 0 9 * * 1-5。
 - limit：限制重复任务的最大执行次数。
 
-Agent 可以使用 cron_create、cron_list 和 cron_delete 三个工具。创建任务时可以沿用当前飞书 Session，也可以创建独立 Session。没有显式指定目标时，需要在 Channel 中配置 proactiveTarget。
+Agent 可以使用 cron_create、cron_list 和 cron_delete 三个工具。创建任务时可以沿用当前飞书 Session，也可以创建独立 Session。没有显式指定目标时，需要在 Channel 中配置 `params.chat_id`。
 
 管理 API 默认监听 127.0.0.1:8787：
 

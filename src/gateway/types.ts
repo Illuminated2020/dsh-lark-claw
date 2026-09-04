@@ -97,6 +97,7 @@ export interface FeishuTransportConfig {
   readonly channelId: string
   readonly appId: string
   readonly appSecret: string
+  readonly domain?: 'feishu' | 'lark'
   readonly policy?: {
     readonly groupAllowlist?: readonly string[]
     readonly dmMode?: 'open' | 'allowlist' | 'pair' | 'disabled'
@@ -114,6 +115,8 @@ export interface FeishuTransportFactory {
 export interface FeishuChannelConfig {
   readonly id: string
   readonly appId: string
+  /** Official API domain selected by the YAML channel type. */
+  readonly domain?: 'feishu' | 'lark'
   /** Credential variable name used by the legacy environment configuration. */
   readonly appSecretEnv?: string
   /** Secret loaded from the plugin YAML configuration. */

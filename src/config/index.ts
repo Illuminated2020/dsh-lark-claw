@@ -151,6 +151,7 @@ function channelFromYaml(channel: YamlChannel): FeishuChannelConfig {
   const params = channel.params
   const type = channel.type.toLowerCase()
   if (type !== 'feishu' && type !== 'lark') throw new Error(`dsh-lark-claw channel "${channel.id}" has unsupported type ${channel.type}`)
+  const domain = type === 'lark' ? 'lark' : 'feishu'
   const appId = stringParam(params, 'app_id', 'appId')
   const appSecret = stringParam(params, 'app_secret', 'appSecret')
   const appSecretEnv = stringParam(params, 'app_secret_env', 'appSecretEnv')
@@ -173,6 +174,7 @@ function channelFromYaml(channel: YamlChannel): FeishuChannelConfig {
   return {
     id: channel.id,
     appId,
+    domain,
     ...appSecret === undefined ? {} : { appSecret },
     ...appSecretEnv === undefined ? {} : { appSecretEnv },
     ...groupAllowlist === undefined ? {} : { groupAllowlist },

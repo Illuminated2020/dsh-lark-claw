@@ -23,7 +23,7 @@ The plugin is a normal dsh Bundle. It contributes a startup profile and two Cord
 
 ## Requirements
 
-- Node.js 20 or later.
+- Node.js `^22.19.0` or `>=24.0.0`.
 - dsh 0.1.2-rc.1 or later.
 - A Lark/Feishu app with its App ID and App Secret.
 - A model configuration accepted by dsh, such as DEEPSEEK_API_KEY and the provider/model settings used by your dsh installation.
@@ -98,7 +98,7 @@ One YAML file can serve more than one Lark/Feishu app. Each channel has these fi
 | Field | Meaning |
 | --- | --- |
 | `id` | Local identifier for the channel. |
-| `type` | `feishu` or `lark`. |
+| `type` | `feishu` or `lark`; selects the corresponding official API domain. |
 | `params.app_id` | Lark/Feishu App ID. |
 | `params.app_secret` | App Secret, either literal or `$ENV_NAME`. |
 | `params.chat_id` | Default destination for cron and proactive messages, optional. |
@@ -152,7 +152,7 @@ Supported schedules are:
 - pattern: a five-field cron expression such as 0 9 * * 1-5.
 - limit: an optional maximum number of recurring runs.
 
-The model has three tools: cron_create, cron_list, and cron_delete. A job can reuse the current Feishu Session or run in a new Session. For a job created without an explicit target, configure proactiveTarget on the channel.
+The model has three tools: cron_create, cron_list, and cron_delete. A job can reuse the current Feishu Session or run in a new Session. For a job created without an explicit target, configure `params.chat_id` on the channel.
 
 The management API listens on 127.0.0.1:8787 by default:
 

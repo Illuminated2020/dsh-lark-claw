@@ -2,6 +2,7 @@
 
 import {
   createLarkChannel,
+  Domain,
   type LarkChannel,
   type LarkChannelOptions,
   type NormalizedMessage,
@@ -152,6 +153,7 @@ export class LarkFeishuTransportFactory implements FeishuTransportFactory {
     const options: LarkChannelOptions = {
       appId: config.appId,
       appSecret: config.appSecret,
+      domain: config.domain === 'lark' ? Domain.Lark : Domain.Feishu,
       transport: 'websocket',
       source: 'dsh-lark-claw-gateway',
       policy: {

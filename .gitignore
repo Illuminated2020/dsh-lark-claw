@@ -1,0 +1,8 @@
+node_modules/
+lib/
+.turbo/
+.env
+.env.*
+!.env.example
+.dsh-feishu/
+*.tsbuildinfo

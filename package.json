@@ -28,6 +28,7 @@
   "files": [
     "lib",
     "src",
+    "tsconfig.json",
     "cordis.patch.yml",
     "dsh.plugin.json",
     "scripts/dsh-lark-claw-service.sh",
@@ -49,7 +50,7 @@
   "packageManager": "pnpm@10.30.1",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": "^22.19.0 || >=24.0.0"
   },
   "dsh": {
     "bundle": {
@@ -67,10 +68,10 @@
     "@deepseek-ai/dsh-session": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-session-persistence": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-storage-domain": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-storage-sqlite": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "^0.1.2-rc.1"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-storage-sqlite": "^0.1.2-rc.1",
     "@deepseek-ai/schemastery": "^3.18.2",
     "@larksuiteoapi/node-sdk": "^1.73.2",
     "yaml": "^2.9.0",

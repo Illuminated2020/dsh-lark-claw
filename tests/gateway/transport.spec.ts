@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { LarkChannel } from '@larksuiteoapi/node-sdk'
-import { LarkFeishuTransport } from '../../src/gateway/transport.ts'
+import { Domain, type LarkChannel } from '@larksuiteoapi/node-sdk'
+
+const { createLarkChannel } = vi.hoisted(() => ({ createLarkChannel: vi.fn() }))
+
+vi.mock('@larksuiteoapi/node-sdk', async () => {
+  const actual = await vi.importActual<typeof import('@larksuiteoapi/node-sdk')>('@larksuiteoapi/node-sdk')
+  return { ...actual, createLarkChannel }
+})
+
+import { LarkFeishuTransport, LarkFeishuTransportFactory } from '../../src/gateway/transport.ts'
 
 describe('LarkFeishuTransport message lifecycle', () => {
   it('uses message.reply and preserves Feishu thread_id for durable session binding', async () => {
@@ -25,6 +33,20 @@ describe('LarkFeishuTransport message lifecycle', () => {
         reply_in_thread: true,
       },
     })
+  })
+
+  it('passes the Lark API domain to the official SDK', () => {
+    createLarkChannel.mockReturnValue({} as LarkChannel)
+    const factory = new LarkFeishuTransportFactory()
+
+    factory.create({
+      channelId: 'lark-main',
+      appId: 'cli_test',
+      appSecret: 'secret',
+      domain: 'lark',
+    })
+
+    expect(createLarkChannel).toHaveBeenCalledWith(expect.objectContaining({ domain: Domain.Lark }))
   })
 
 })

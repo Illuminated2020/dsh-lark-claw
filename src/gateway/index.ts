@@ -62,6 +62,7 @@ export const Config: z<FeishuGatewayConfig> = z.object({
   channels: z.array(z.object({
     id: z.string().required(),
     appId: z.string().required(),
+    domain: z.union([z.const('feishu'), z.const('lark')]),
     appSecretEnv: z.string().role('credential-ref'),
     appSecret: z.string().role('secret'),
     groupAllowlist: z.array(z.string()),
@@ -71,7 +72,7 @@ export const Config: z<FeishuGatewayConfig> = z.object({
     proactiveTarget: z.object({
       chatId: z.string().required(),
       threadId: z.string(),
-    }),
+    }).default(undefined as unknown as { chatId: string; threadId: string }),
   }).required()).required(),
   defaultChannelId: z.string(),
   streamUpdateIntervalMs: z.number().step(1).min(0).default(300),
@@ -439,6 +440,7 @@ export class FeishuGateway implements FeishuGatewayService {
           channelId: channelConfig.id,
           appId: channelConfig.appId,
           appSecret: secret,
+          domain: channelConfig.domain ?? 'feishu',
           policy: {
             ...channelConfig.groupAllowlist === undefined ? {} : { groupAllowlist: channelConfig.groupAllowlist },
             ...channelConfig.dmMode === undefined ? {} : { dmMode: channelConfig.dmMode },
