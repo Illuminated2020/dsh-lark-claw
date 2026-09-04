@@ -1,0 +1,17 @@
+{
+  "id": "dsh-external/dsh-lark-claw",
+  "version": "0.1.0",
+  "main": "./lib/index.js",
+  "description": "Lark/Feishu gateway, streaming execution cards, and persistent cron jobs for DeepSeek Harness",
+  "engines": {
+    "dsh": ">=0.1.2-rc.1"
+  },
+  "contributes": {
+    "tools": [
+      "cron_create",
+      "cron_list",
+      "cron_delete"
+    ],
+    "skills": []
+  }
+}

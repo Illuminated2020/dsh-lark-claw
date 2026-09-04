@@ -1,0 +1,47 @@
+# Standalone dsh bundle: storage, control API, Feishu gateway and persistent cron.
+
+- insert:
+    - id: dsh-lark-claw-config
+      name: 'dsh-lark-claw/config'
+      config:
+        path: !!js process.env.DSH_LARK_CLAW_CONFIG
+
+- insert:
+    - id: storage-sqlite
+      name: '@deepseek-ai/dsh-storage-sqlite'
+      config:
+        path: !!js dshHomePath('storage/feishu-gateway.sqlite')
+
+- id: storage-domain
+  config:
+    backend: sqlite
+
+- insert:
+    - id: feishu-control-web
+      name: '@deepseek-ai/dsh-host-webserver'
+      inject: [dshLarkClawConfig]
+      config:
+        host: !!js ctx.dshLarkClawConfig.server.host ?? '127.0.0.1'
+        port: !!js ctx.dshLarkClawConfig.server.port ?? 8787
+        compression: none
+
+- insert:
+    - id: feishu-gateway
+      name: 'dsh-lark-claw/gateway'
+      inject: [dshLarkClawConfig]
+      config:
+        workspace: !!js ctx.dshLarkClawConfig.gateway.workspace
+        provider: !!js ctx.dshLarkClawConfig.gateway.provider
+        model: !!js ctx.dshLarkClawConfig.gateway.model
+        channels: !!js ctx.dshLarkClawConfig.gateway.channels
+        defaultChannelId: !!js ctx.dshLarkClawConfig.gateway.defaultChannelId
+        streamUpdateIntervalMs: !!js ctx.dshLarkClawConfig.gateway.streamUpdateIntervalMs ?? 300
+        cardMarkdownLimit: !!js ctx.dshLarkClawConfig.gateway.cardMarkdownLimit ?? 28000
+
+    - id: feishu-cron
+      name: 'dsh-lark-claw/cron'
+      inject: [dshLarkClawConfig]
+      config:
+        concurrency: !!js ctx.dshLarkClawConfig.cron.concurrency ?? 4
+        timezone: !!js ctx.dshLarkClawConfig.cron.timezone
+        apiToken: !!js ctx.dshLarkClawConfig.cron.apiToken

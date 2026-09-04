@@ -1,0 +1,89 @@
+{
+  "name": "dsh-lark-claw",
+  "version": "0.1.0",
+  "description": "A standalone Lark/Feishu gateway and persistent cron bundle for DeepSeek Harness",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./gateway": {
+      "types": "./lib/types/gateway/index.d.ts",
+      "default": "./lib/gateway/index.js"
+    },
+    "./cron": {
+      "types": "./lib/types/cron/index.d.ts",
+      "default": "./lib/cron/index.js"
+    },
+    "./config": {
+      "types": "./lib/types/config/index.d.ts",
+      "default": "./lib/config/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "scripts/dsh-lark-claw-service.sh",
+    "config.yaml.example",
+    ".env.example",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf lib && tsc -p tsconfig.json && tsdown",
+    "prepare": "pnpm build",
+    "prepublishOnly": "pnpm build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "oxlint src tests",
+    "clean": "rm -rf lib"
+  },
+  "packageManager": "pnpm@10.30.1",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-attachment": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-commands": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-credentials": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-session": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-session-persistence": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-storage-domain": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-storage-sqlite": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.1.2-rc.1"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@larksuiteoapi/node-sdk": "^1.73.2",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "oxlint": "^1.76.0",
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

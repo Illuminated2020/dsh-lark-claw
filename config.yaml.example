@@ -1,0 +1,41 @@
+# dsh-lark-claw configuration.
+# Copy this file to $DSH_HOME/config.yaml (normally ~/.dsh/config.yaml).
+
+timezone: Asia/Shanghai
+
+agents:
+  default:
+    type: dsh
+    provider: deepseek
+    model: deepseek-chat
+
+messaging:
+  default_channel_id: main
+  channels:
+    - id: main
+      type: feishu
+      name: Main Feishu bot
+      params:
+        app_id: cli_xxx
+        app_secret: replace-me
+        # Use app_secret: $FEISHU_MAIN_APP_SECRET when the secret should stay
+        # outside this file. Both forms are supported.
+        chat_id: oc_xxx
+        dm_mode: allowlist
+        dm_allowlist: '["ou_xxx"]'
+        group_allowlist: '["oc_xxx"]'
+        require_mention: true
+
+# dsh-lark-claw-specific settings. They are optional; the defaults are shown.
+gateway:
+  workspace: /srv/dsh/workspace
+  stream_update_interval_ms: 300
+  card_markdown_limit: 28000
+
+server:
+  host: 127.0.0.1
+  port: 8787
+
+cron:
+  concurrency: 4
+  api_token: replace-me
