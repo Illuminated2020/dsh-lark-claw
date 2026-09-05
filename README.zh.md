@@ -33,6 +33,12 @@
 dsh plugin --profile feishu add dsh-lark-claw
 ```
 
+未指定版本时会安装 npm `latest`。已有安装请运行下面的命令升级，然后重启正在运行的 `dsh --profile feishu` 进程：
+
+```sh
+dsh plugin --profile feishu update dsh-lark-claw@latest
+```
+
 `dsh plugin` 会调用 pnpm 管理 profile。npm 尚未发布所需版本时，请按[本地源码安装](guides/advanced.zh.md#从本地源码安装)操作。
 
 **配置机器人：**

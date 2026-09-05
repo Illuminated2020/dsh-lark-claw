@@ -33,6 +33,12 @@ Configure the app in the Lark/Feishu developer console:
 dsh plugin --profile feishu add dsh-lark-claw
 ```
 
+Without an explicit version, this installs the npm `latest` release. To upgrade an existing installation, run the command below and then restart the running `dsh --profile feishu` process:
+
+```sh
+dsh plugin --profile feishu update dsh-lark-claw@latest
+```
+
 `dsh plugin` uses pnpm to manage the profile. If the required version is not yet on npm, follow the [local source installation](guides/advanced.md#install-from-local-source) instructions.
 
 **Configure your bot:**
