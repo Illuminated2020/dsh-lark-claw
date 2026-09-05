@@ -1,8 +1,8 @@
-/** Official Feishu Channel SDK adapter. The Gateway depends only on this file's port. */
-
+/** Feishu message delivery and workspace resource support. */
 import {
   createLarkChannel,
   Domain,
+  normalize,
   type LarkChannel,
   type LarkChannelOptions,
   type NormalizedMessage,
@@ -85,11 +85,11 @@ export class LarkFeishuTransport implements FeishuTransport {
   }
 
   async sendImage(target: FeishuTarget, data: Uint8Array, _fileName: string, options?: FeishuSendOptions) {
-    return this.channel.send(target.chatId, { image: { source: Buffer.from(data) } }, targetOptions(target, options))
+    return this.channel.send(target.chatId, { image: { source: Buffer.from(data) } }, await this.resolveReplyOptions(target, options))
   }
 
   async sendFile(target: FeishuTarget, data: Uint8Array, fileName: string, options?: FeishuSendOptions) {
-    return this.channel.send(target.chatId, { file: { source: Buffer.from(data), fileName } }, targetOptions(target, options))
+    return this.channel.send(target.chatId, { file: { source: Buffer.from(data), fileName } }, await this.resolveReplyOptions(target, options))
   }
 
   async uploadImage(data: Uint8Array, _fileName: string): Promise<string> {
@@ -101,8 +101,49 @@ export class LarkFeishuTransport implements FeishuTransport {
     return imageKey
   }
 
-  async downloadResource(fileKey: string, type: 'image' | 'file'): Promise<Uint8Array> {
-    return this.channel.downloadResource(fileKey, type === 'image' ? 'image' : 'file')
+  async getMessageResources(messageId: string, chatId: string): Promise<readonly FeishuResource[]> {
+    const response = await this.channel.rawClient.im.v1.message.get({ path: { message_id: messageId } })
+    if (response.code !== undefined && response.code !== 0) throw new Error(`Feishu message lookup failed (${response.code}): ${response.msg ?? 'Unknown error'}`)
+    const message = response.data?.items?.find(item => item.message_id === messageId)
+    if (message === undefined || message.deleted || message.chat_id !== chatId) {
+      throw new Error('Replied message is unavailable or belongs to another chat')
+    }
+    // Only extract this message's attachments; do not follow ancestors or forwarded descendants.
+    if (!['file', 'audio', 'media', 'image', 'post'].includes(message.msg_type ?? '')) return []
+    if (message.body?.content === undefined) throw new Error('Replied message has no content')
+    const normalized = await normalize({
+      sender: { sender_id: {} },
+      message: {
+        message_id: messageId, chat_id: chatId, chat_type: 'group',
+        message_type: message.msg_type!, content: message.body.content,
+      },
+    }, { botIdentity: { openId: '', name: '' }, stripBotMentions: false })
+    return normalized.resources.flatMap(resource => {
+      const result = resourceOf(resource)
+      return result === undefined ? [] : [result]
+    })
+  }
+
+  async downloadResource(messageId: string, fileKey: string, type: 'image' | 'file'): Promise<Uint8Array> {
+    const response = await this.channel.rawClient.im.v1.messageResource.get({
+      path: { message_id: messageId, file_key: fileKey },
+      params: { type },
+    })
+    const chunks: Buffer[] = []
+    for await (const chunk of response.getReadableStream()) chunks.push(Buffer.from(chunk))
+    return Buffer.concat(chunks)
+  }
+
+  /** A Feishu thread ID is not a message ID. Resolve an anchor before replying. */
+  private async resolveReplyOptions(target: FeishuTarget, options?: FeishuSendOptions): Promise<SendOptions> {
+    if (options?.replyTo !== undefined || target.threadId === undefined) return targetOptions(target, options)
+    const response = await this.channel.rawClient.im.message.list({
+      params: { container_id_type: 'thread', container_id: target.threadId, sort_type: 'ByCreateTimeAsc', page_size: 20 },
+    })
+    const anchor = response.data?.items?.find(message => !message.deleted && message.message_id !== undefined
+      && message.chat_id === target.chatId)
+    if (anchor?.message_id === undefined) throw new Error(`Cannot resolve a reply message in Feishu thread ${target.threadId}`)
+    return { replyTo: anchor.message_id, replyInThread: true }
   }
 
   /**
@@ -117,11 +158,12 @@ export class LarkFeishuTransport implements FeishuTransport {
     content: string,
     options?: FeishuSendOptions,
   ): Promise<{ messageId: string; threadId?: string }> {
-    const replyInThread = options?.replyInThread ?? target.threadId !== undefined
+    const resolvedOptions = await this.resolveReplyOptions(target, options)
+    const replyInThread = resolvedOptions.replyInThread ?? target.threadId !== undefined
     let response: RawMessageResponse
-    if (options?.replyTo !== undefined) {
+    if (resolvedOptions.replyTo !== undefined) {
       response = await this.channel.rawClient.im.message.reply({
-        path: { message_id: options.replyTo },
+        path: { message_id: resolvedOptions.replyTo },
         data: {
           msg_type: msgType,
           content,
@@ -140,6 +182,16 @@ export class LarkFeishuTransport implements FeishuTransport {
     }
     const messageId = response.data?.message_id
     if (messageId === undefined) throw new Error('Feishu message response did not include message_id')
+    // Create a root message, then a reply to establish the topic.
+    // Return the root card ID for updates and the reply's topic for session routing.
+    if (resolvedOptions.replyTo === undefined && msgType === 'interactive' && response.data?.thread_id === undefined) {
+      const reply = await this.channel.rawClient.im.message.reply({
+        path: { message_id: messageId },
+        data: { msg_type: 'text', content: JSON.stringify({ text: 'Reply here to continue the conversation.「你可以直接在这里继续对话。」💬' }), reply_in_thread: true },
+      })
+      if (reply.data?.thread_id === undefined) throw new Error('Feishu continuation reply did not include thread_id')
+      return { messageId, threadId: reply.data.thread_id }
+    }
     return {
       messageId,
       ...response.data?.thread_id === undefined ? {} : { threadId: response.data.thread_id },

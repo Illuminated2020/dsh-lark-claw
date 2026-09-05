@@ -20,6 +20,7 @@ import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { boundExecutionCard, renderFeishuCard, splitMarkdownByTables } from './card.ts'
 import { feishuGatewayDomainSpec } from './state.ts'
 import { createLarkFeishuTransportFactory } from './transport.ts'
+import { fileMessageContent, saveMessageResource } from './message-resources.ts'
 import type {
   ExecutionCardProjection,
   ExecutionCardStep,
@@ -372,7 +373,6 @@ type SessionPersistenceCompat = {
 }
 
 type AttachmentStoreCompat = AttachmentStore & {
-  saveFile?: (input: { data: Uint8Array; name: string }) => Promise<FeishuFileBlock['attachment']>
   readFileStream?: (attachment: FeishuFileBlock['attachment']) => AsyncIterable<Uint8Array>
 }
 
@@ -752,7 +752,16 @@ export class FeishuGateway implements FeishuGatewayService {
       content: [{ type: 'text', text: framed }],
       source: { kind: 'plugin', plugin: 'feishu-cron' },
     })
-    await this.runTurn(channel.transport, target, {}, runtime, userMessage)
+    // Prefer the persisted message anchor for an existing conversation. Only
+    // configured topics without a known card need a transport history lookup.
+    const replyOptions = target.threadId !== undefined
+      && runtime.record.channelId === channelId
+      && runtime.record.chatId === target.chatId
+      && runtime.record.threadId === target.threadId
+      && runtime.record.cardMessageId !== undefined
+      ? { replyTo: runtime.record.cardMessageId, replyInThread: true }
+      : {}
+    await this.runTurn(channel.transport, target, replyOptions, runtime, userMessage)
     return {
       sessionId: runtime.record.sessionId,
       ...runtime.record.cardMessageId === undefined ? {} : { messageId: runtime.record.cardMessageId },
@@ -772,30 +781,53 @@ export class FeishuGateway implements FeishuGatewayService {
   }
 
   private async admitResources(transport: FeishuTransport, message: FeishuMessage): Promise<ContentBlock[]> {
+    const blocks = await this.admitMessageResources(transport, message)
+    const parentId = message.replyToMessageId
+    if (parentId === undefined || parentId === message.messageId) return blocks
+    let resources: FeishuMessage['resources']
+    try {
+      resources = await transport.getMessageResources(parentId, message.chatId)
+    } catch (error: unknown) {
+      const reason = error instanceof Error ? error.message : 'Unknown message lookup error'
+      blocks.push({ type: 'text', text: `被回复消息的附件读取失败：${reason}。附件内容未提供，不能声称已读取该附件。` })
+      this.ctx.logger.warn(`feishu-gateway replied message ${JSON.stringify(parentId)} lookup failed: ${reason}`)
+      return blocks
+    }
+    if (resources.length !== 0) {
+      blocks.push({ type: 'text', text: '以下附件来自本次明确回复的消息。' })
+      blocks.push(...await this.admitMessageResources(transport, { ...message, messageId: parentId, content: '', resources }))
+    }
+    return blocks
+  }
+
+  private async admitMessageResources(transport: FeishuTransport, message: FeishuMessage): Promise<ContentBlock[]> {
     const blocks: ContentBlock[] = []
     if (message.content !== '') blocks.push({ type: 'text', text: message.content })
     if (message.resources.length === 0) return blocks
     const store = this.ctx.get('attachments') as AttachmentStoreCompat | undefined
-    if (store === undefined) throw new Error('附件不可用：当前 profile 没有挂载 dsh Attachment store')
     for (const resource of message.resources) {
-      const type = resource.type === 'image' ? 'image' : 'file'
-      const bytes = await transport.downloadResource(resource.fileKey, type)
-      if (resource.type === 'image') {
-        const mediaType = imageMediaType(bytes)
-        if (mediaType === undefined) throw new Error(`图片 ${resource.fileKey} 的格式不受支持`)
-        const attachment = await store.saveImage({
-          data: bytes,
-          mediaType,
-          ...resource.fileName === undefined ? {} : { name: resource.fileName },
-        })
-        blocks.push({ type: 'image', attachment })
-      } else {
-        if (store.saveFile === undefined) {
-          blocks.push({ type: 'text', text: `[Feishu ${resource.type}: ${resource.fileName ?? resource.fileKey}]` })
-          continue
+      try {
+        const type = resource.type === 'image' ? 'image' : 'file'
+        const bytes = await transport.downloadResource(message.messageId, resource.fileKey, type)
+        if (resource.type === 'image') {
+          if (store === undefined) throw new Error('附件不可用：当前 profile 没有挂载 dsh Attachment store')
+          const mediaType = imageMediaType(bytes)
+          if (mediaType === undefined) throw new Error(`图片 ${resource.fileKey} 的格式不受支持`)
+          const attachment = await store.saveImage({
+            data: bytes,
+            mediaType,
+            ...resource.fileName === undefined ? {} : { name: resource.fileName },
+          })
+          blocks.push({ type: 'image', attachment })
+        } else {
+          const path = await saveMessageResource(this.config.workspace, bytes, resource.fileName ?? `${resource.type}-${resource.fileKey}`)
+          blocks.push(fileMessageContent(path))
         }
-        const attachment = await store.saveFile({ data: bytes, name: resource.fileName ?? `${resource.type}-${resource.fileKey}` })
-        blocks.push({ type: 'file', attachment } as unknown as ContentBlock)
+      } catch (error: unknown) {
+        // Keep admission failures in the normal logged user message so later turns can explain them.
+        const reason = error instanceof Error ? error.message : 'Unknown attachment error'
+        blocks.push({ type: 'text', text: `附件接入失败（${JSON.stringify(resource.fileName ?? resource.fileKey)}）：${reason}。该附件内容未提供给模型，不能据此声称已读取或识别该附件。` })
+        this.ctx.logger.warn(`feishu-gateway resource in message ${JSON.stringify(message.messageId)} failed: ${reason}`)
       }
     }
     return blocks

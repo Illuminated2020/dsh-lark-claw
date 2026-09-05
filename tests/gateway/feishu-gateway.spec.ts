@@ -5,6 +5,9 @@
 /* oxlint-disable typescript/no-unsafe-member-access -- The erased fake shapes are asserted by the behavior tests below. */
 /* oxlint-disable typescript/no-unsafe-return -- The erased fake shapes are asserted by the behavior tests below. */
 
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
@@ -18,6 +21,11 @@ import type {
   FeishuTransport,
   FeishuTransportConfig,
 } from '../../src/gateway/types.ts'
+
+const testWorkspaces: string[] = []
+afterEach(async () => {
+  for (const path of testWorkspaces.splice(0)) await rm(path, { recursive: true, force: true })
+})
 
 type AnyHandler = (payload: any) => void
 
@@ -110,7 +118,9 @@ class FakeTransport implements FeishuTransport {
     return { messageId: `file-${this.channelId}-${String(this.files.length)}` }
   }
 
-  async downloadResource(fileKey: string, type: 'image' | 'file'): Promise<Uint8Array> {
+  getMessageResources = vi.fn(async (): Promise<FeishuMessage['resources']> => [])
+
+  async downloadResource(_messageId: string, fileKey: string, type: 'image' | 'file'): Promise<Uint8Array> {
     if (type === 'image') return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0])
     return new TextEncoder().encode(`downloaded:${fileKey}`)
   }
@@ -204,7 +214,6 @@ function harness(state = memoryState(), withAttachments = false, turnGate?: Prom
   const attachments = withAttachments
     ? {
       saveImage: vi.fn(async (input: any) => ({ id: 'image-1', name: input.name, mediaType: input.mediaType, bytes: input.data.byteLength })),
-      saveFile: vi.fn(async (input: any) => ({ id: 'file-1', name: input.name ?? 'file', bytes: input.data.byteLength })),
       readImage: vi.fn(),
       readFileStream: vi.fn(),
     }
@@ -432,8 +441,15 @@ describe('Feishu Gateway', () => {
       return transport
     } })
     gateways.push(secondGateway)
+    const sessionId = first.creates[0]!
+    const destination = secondGateway.resolveSessionTarget(sessionId)!
+    await secondGateway.runScheduledTask({
+      schedulerId: 'after-restart', instruction: 'scheduled followup', sessionId,
+      channelId: destination.channelId, target: destination.target,
+    })
+    expect(second.transports.get('main')!.cards[0]?.options).toEqual({ replyTo: 'card-main-1', replyInThread: true })
     second.transports.get('main')!.emit(message({ messageId: 'message-after-restart', threadId: 'thread-restart' }))
-    await eventually(() => second.resumes.length === 1)
+    await eventually(() => second.agents[0]?.followed.length === 2)
     expect(second.resumes[0]).toBe(first.creates[0])
     expect(second.creates).toHaveLength(0)
   })
@@ -522,10 +538,12 @@ describe('Feishu Gateway', () => {
     expect(transport.updates.length).toBeGreaterThan(0)
   })
 
-  it('admits Feishu images as native image blocks and other media as durable file blocks', async () => {
+  it('admits images natively and saves other media to workspace uploads without saveFile', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-uploads-'))
+    testWorkspaces.push(workspace)
     const h = harness(memoryState(), true)
     const gateway = await startFeishuGateway(h.ctx, {
-      workspace: '/tmp/dsh-lark-claw-test',
+      workspace,
       channels: [{ id: 'main', appId: 'cli_test', appSecretEnv: 'FEISHU_SECRET' }],
     }, { create: (config) => {
       const transport = new FakeTransport(config.channelId, config)
@@ -541,10 +559,80 @@ describe('Feishu Gateway', () => {
       { type: 'video', fileKey: 'video-key' },
     ] }))
     await eventually(() => h.agents[0]?.followed.length === 1)
-    const content = h.agents[0]!.followed[0].content as readonly { type: string }[]
-    expect(content.map(block => block.type)).toEqual(['text', 'image', 'file', 'file', 'file'])
+    const content = h.agents[0]!.followed[0].content as readonly { type: string; text?: string }[]
+    expect(content.map(block => block.type)).toEqual(['text', 'image', 'text', 'text', 'text'])
     expect(h.attachments.saveImage).toHaveBeenCalledWith(expect.objectContaining({ mediaType: 'image/png', name: 'photo.png' }))
-    expect(h.attachments.saveFile).toHaveBeenCalledTimes(3)
+    for (const [index, name, key] of [[2, 'report.pdf', 'file-key'], [3, 'audio-audio-key', 'audio-key'], [4, 'video-video-key', 'video-key']] as const) {
+      const path = join(workspace, 'uploads', name)
+      expect(content[index]?.text).toBe(`A new file message uploaded to \`${path}\``)
+      expect(await readFile(path, 'utf8')).toBe(`downloaded:${key}`)
+    }
+  })
+
+  it('keeps the user text and attachment failure in the model turn, then accepts a followup', async () => {
+    const h = harness(memoryState(), true)
+    const gateway = await startFeishuGateway(h.ctx, {
+      workspace: '/tmp/dsh-lark-claw-test',
+      channels: [{ id: 'main', appId: 'cli_test', appSecretEnv: 'FEISHU_SECRET' }],
+    }, { create: config => {
+      const transport = new FakeTransport(config.channelId, config)
+      h.transports.set(config.channelId, transport)
+      return transport
+    } })
+    gateways.push(gateway)
+    const transport = h.transports.get('main')!
+    const download = vi.spyOn(transport, 'downloadResource')
+      .mockRejectedValueOnce(new Error('Request failed with status code 400'))
+    transport.emit(message({ threadId: 'topic', content: '你看得到这张图吗', resources: [
+      { type: 'image', fileKey: 'broken-image' },
+      { type: 'image', fileKey: 'good-image' },
+    ] }))
+    await eventually(() => h.agents[0]?.followed.length === 1)
+    expect(download).toHaveBeenCalledWith('message-1', 'broken-image', 'image')
+    const content = h.agents[0]!.followed[0].content
+    expect(content[0]).toEqual({ type: 'text', text: '你看得到这张图吗' })
+    expect(content[1].text).toContain('附件接入失败')
+    expect(content[1].text).toContain('status code 400')
+    expect(content[2].type).toBe('image')
+    transport.emit(message({ messageId: 'followup', threadId: 'topic', content: '发生什么了' }))
+    await eventually(() => h.agents[0]?.followed.length === 2)
+    expect(h.agents).toHaveLength(1)
+    expect(h.agents[0]!.followed[1].content[0].text).toBe('发生什么了')
+  })
+
+  it.each([false, true])('admits explicitly replied attachments and preserves lookup failures (%s)', async (fail) => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-reply-upload-'))
+    testWorkspaces.push(workspace)
+    const h = harness(memoryState(), true)
+    const gateway = await startFeishuGateway(h.ctx, {
+      workspace, channels: [{ id: 'main', appId: 'cli_test', appSecretEnv: 'FEISHU_SECRET' }],
+    }, { create: config => {
+      const transport = new FakeTransport(config.channelId, config)
+      h.transports.set(config.channelId, transport)
+      return transport
+    } })
+    gateways.push(gateway)
+    const transport = h.transports.get('main')!
+    if (fail) transport.getMessageResources.mockRejectedValue(new Error('permission denied'))
+    else transport.getMessageResources.mockResolvedValue([{ type: 'file', fileKey: 'parent-file', fileName: 'report.pdf' }])
+    const download = vi.spyOn(transport, 'downloadResource')
+    transport.emit(message({ content: '分析这个文件', replyToMessageId: 'parent', resources: [{ type: 'image', fileKey: 'own-image' }] }))
+    await eventually(() => h.agents[0]?.followed.length === 1)
+    expect(transport.getMessageResources).toHaveBeenCalledWith('parent', 'chat-1')
+    expect(download).toHaveBeenCalledWith('message-1', 'own-image', 'image')
+    const content = h.agents[0]!.followed[0].content
+    expect(content[0].text).toBe('分析这个文件')
+    if (fail) {
+      expect(JSON.stringify(content)).toContain('permission denied')
+      expect(download).not.toHaveBeenCalledWith('parent', expect.anything(), expect.anything())
+    } else {
+      expect(download).toHaveBeenCalledWith('parent', 'parent-file', 'file')
+      expect(JSON.stringify(content)).toContain(join(workspace, 'uploads', 'report.pdf'))
+      expect(await readFile(join(workspace, 'uploads', 'report.pdf'), 'utf8')).toBe('downloaded:parent-file')
+    }
+    transport.emit(message({ messageId: 'unquoted', threadId: 'other-topic', content: 'hello' }))
+    await eventually(() => h.agents.reduce((n, a) => n + a.followed.length, 0) === 2)
+    expect(transport.getMessageResources).toHaveBeenCalledTimes(1)
   })
 
   it('enforces source allowlists independently per Channel', async () => {

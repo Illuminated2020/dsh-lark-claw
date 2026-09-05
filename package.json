@@ -36,6 +36,9 @@
     ".env.example",
     "README.md",
     "README.zh.md",
+    "assets/feishu-deepseek.png",
+    "guides/advanced.md",
+    "guides/advanced.zh.md",
     "LICENSE"
   ],
   "scripts": {

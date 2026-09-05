@@ -89,7 +89,10 @@ export interface FeishuTransport {
   sendFile(target: FeishuTarget, data: Uint8Array, fileName: string, options?: FeishuSendOptions): Promise<FeishuSendReceipt>
   /** Upload an image for embedding in an interactive card. */
   uploadImage?(data: Uint8Array, fileName: string): Promise<string>
-  downloadResource(fileKey: string, type: 'image' | 'file'): Promise<Uint8Array>
+  /** Read attachments from one explicitly replied message in the same chat. */
+  getMessageResources(messageId: string, chatId: string): Promise<readonly FeishuResource[]>
+  /** Download a received resource using its source message, including post images. */
+  downloadResource(messageId: string, fileKey: string, type: 'image' | 'file'): Promise<Uint8Array>
 }
 
 /** Settings needed to construct one transport instance. */
@@ -149,7 +152,7 @@ export interface FeishuFileAttachment {
   readonly [key: string]: unknown
 }
 
-/** Session-facing file block; older dsh releases simply fall back to text. */
+/** Optional outbound file block from an attachment provider; inbound files use workspace paths. */
 export interface FeishuFileBlock {
   readonly type: 'file'
   readonly attachment: FeishuFileAttachment
