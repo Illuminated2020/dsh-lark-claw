@@ -56,9 +56,8 @@ The repository workflow uses OIDC and needs no long-lived `NPM_TOKEN`. npm Trust
 2. Run `pnpm run release:check`.
 3. Commit and push the changes.
 4. Create and push a tag that exactly matches the version, such as `v0.1.1`.
-5. Publish a GitHub Release from that tag.
 
-`publish.yml` checks out the release tag, confirms that its commit is on `main`, verifies the tag, package version, and prerelease state, reruns the complete gate, and publishes the package. A regular GitHub Release publishes under `latest`; a prerelease publishes under `next`.
+Pushing the tag triggers `publish.yml`. The workflow confirms that the commit is on `main`, verifies the tag and package version, reruns the complete gate, publishes through OIDC, and creates the GitHub Release. A stable version publishes under `latest`; a SemVer prerelease publishes under `next` and creates a prerelease.
 
 For example:
 
@@ -72,13 +71,13 @@ git tag v0.1.1
 git push origin main v0.1.1
 ```
 
-Create the `v0.1.1` GitHub Release afterward. Never attempt to republish an existing npm version; npm versions are immutable.
+No manual GitHub Release step remains after the tag push. The workflow checks npm first: it skips a version that already exists while still creating a missing GitHub Release, making reruns safe. npm versions remain immutable.
 
 ## Workflow responsibilities
 
 `.github/workflows/ci.yml` runs for pull requests, updates to `main`, and manual dispatch. It covers Node.js `22.19.0` and Node.js 24. The Node.js 24 job also validates the tarball and performs the dsh installation smoke test.
 
-`.github/workflows/publish.yml` runs only when a GitHub Release is published. It uses `id-token: write` for short-lived OIDC credentials and does not use a long-lived npm token. Configure required reviewers on the `npm` GitHub Environment if you want a manual production-release gate.
+`.github/workflows/publish.yml` runs after a tag matching `v*.*.*` is pushed. It uses `id-token: write` for short-lived OIDC credentials and does not use a long-lived npm token; after publishing npm, it creates a GitHub Release with generated notes. Configure required reviewers on the `npm` GitHub Environment if you want a manual production-release gate.
 
 If publishing fails with `ENEEDAUTH`, first verify that the repository, workflow filename, and Environment in npm Trusted Publisher exactly match the values above.
 

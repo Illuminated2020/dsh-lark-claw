@@ -1,25 +1,26 @@
-name: Publish to npm
+name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*.*.*'
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
-  group: npm-publish
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   publish:
+    name: Publish package and create release
     runs-on: ubuntu-latest
     environment: npm
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@v4
@@ -34,19 +35,56 @@ jobs:
       - run: npm install --global npm@11.19.1
       - run: pnpm install --frozen-lockfile
       - name: Verify release metadata
+        id: release
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
-        run: pnpm run verify:release
-      - name: Verify release commit is on main
-        run: git merge-base --is-ancestor HEAD origin/main
-      - run: pnpm run release:check
-      - name: Publish package
-        env:
-          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if [ "$RELEASE_PRERELEASE" = "true" ]; then
-            npm publish --ignore-scripts --access public --tag next
+          package_version="$(node -p "require('./package.json').version")"
+          if [[ "$package_version" == *-* ]]; then
+            prerelease=true
+            npm_tag=next
           else
-            npm publish --ignore-scripts --access public
+            prerelease=false
+            npm_tag=latest
           fi
+          RELEASE_PRERELEASE="$prerelease" pnpm run verify:release
+          echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"
+      - name: Verify release commit is on main
+        run: |
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor HEAD origin/main
+      - run: pnpm run release:check
+      - name: Check whether npm version already exists
+        id: published
+        env:
+          PACKAGE_VERSION: ${{ steps.release.outputs.package_version }}
+        run: |
+          package_ref="dsh-lark-claw@$PACKAGE_VERSION"
+          if npm view "$package_ref" version >/dev/null 2>npm-view-error.log; then
+            echo "$package_ref already exists on npm; skipping publish."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif grep -q 'E404' npm-view-error.log; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            cat npm-view-error.log >&2
+            exit 1
+          fi
+      - name: Publish package
+        if: steps.published.outputs.exists != 'true'
+        run: npm publish --ignore-scripts --access public --tag "${{ steps.release.outputs.npm_tag }}"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "GitHub Release $GITHUB_REF_NAME already exists; skipping creation."
+            exit 0
+          fi
+          args=(release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}"

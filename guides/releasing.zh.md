@@ -56,9 +56,8 @@ npm publish --ignore-scripts --access public
 2. 执行 `pnpm run release:check`。
 3. 提交并推送改动。
 4. 创建并推送与版本完全一致的标签，例如 `v0.1.1`。
-5. 在 GitHub 上基于该标签发布 Release。
 
-`publish.yml` 会检出 Release 标签，确认对应提交已进入 `main`，核对标签、包版本和 prerelease 状态，重新执行完整门禁，再发布 npm 包。正式 Release 使用 `latest` 标签；标记为 prerelease 的 GitHub Release 使用 `next` 标签。
+推送标签会触发 `publish.yml`。工作流确认对应提交已进入 `main`，核对标签和包版本，重新执行完整门禁，再通过 OIDC 发布 npm 包并创建 GitHub Release。正式版本使用 `latest` 标签；SemVer 带预发布后缀的版本使用 `next` 标签，并创建 prerelease。
 
 例如：
 
@@ -72,13 +71,13 @@ git tag v0.1.1
 git push origin main v0.1.1
 ```
 
-最后在 GitHub 中创建 `v0.1.1` Release。不要重复发布已存在的版本；npm 的版本不可覆盖。
+推送标签后无需再打开 GitHub 手动创建 Release。工作流会先查询 npm；版本已存在时跳过 npm 发布，但仍会补建缺失的 GitHub Release，方便失败后安全重跑。npm 版本不可覆盖。
 
 ## 工作流职责
 
 `.github/workflows/ci.yml` 在 pull request、`main` 分支更新和手动触发时运行，覆盖 Node.js `22.19.0` 与 Node.js 24。Node.js 24 任务额外检查 tarball，并执行 dsh 安装烟雾测试。
 
-`.github/workflows/publish.yml` 只在 GitHub Release 发布后运行。它使用 `id-token: write` 获取短期 OIDC 凭据，不接触 npm 长期 token。GitHub Environment `npm` 可以配置必需审核人，作为正式发布前的人工门禁。
+`.github/workflows/publish.yml` 在符合 `v*.*.*` 的标签推送后运行。它使用 `id-token: write` 获取短期 OIDC 凭据，不接触 npm 长期 token；发布 npm 成功后，用 GitHub 自动生成的说明创建 Release。GitHub Environment `npm` 可以配置必需审核人，作为正式发布前的人工门禁。
 
 如果发布任务报 `ENEEDAUTH`，先检查 npm Trusted Publisher 中的仓库名、工作流文件名和 Environment 是否与上述值完全一致。
 
