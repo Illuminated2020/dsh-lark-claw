@@ -1,6 +1,6 @@
 {
   "name": "dsh-lark-claw",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A standalone Lark/Feishu gateway and persistent cron bundle for DeepSeek Harness",
   "keywords": [
     "deepseek-harness",
