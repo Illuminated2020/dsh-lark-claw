@@ -602,7 +602,7 @@ export class FeishuGateway implements FeishuGatewayService {
     let runtime: RuntimeThread | undefined
     try {
       runtime = await this.ensureThread(channel.config, message, key)
-      const blocks = await this.admitResources(channel.transport, message)
+      const blocks = await this.admitResources(channelId, channel.transport, message)
       await this.messageTable().put(messageKey(channelId, message.messageId), {
         channelId,
         messageId: message.messageId,
@@ -779,10 +779,22 @@ export class FeishuGateway implements FeishuGatewayService {
       : this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions })
   }
 
-  private async admitResources(transport: FeishuTransport, message: FeishuMessage): Promise<ContentBlock[]> {
+  private async admitResources(
+    channelId: string,
+    transport: FeishuTransport,
+    message: FeishuMessage,
+  ): Promise<ContentBlock[]> {
     const blocks = await this.admitMessageResources(transport, message)
     const parentId = message.replyToMessageId
     if (parentId === undefined || parentId === message.messageId) return blocks
+    // Feishu topic replies carry the topic root in parent_id even when the
+    // user did not explicitly quote that message. If the Gateway already saw
+    // the root, do not fetch it again or report it as a new attachment
+    // failure. This remains true after a restart or /reset changes the Session.
+    const parent = message.rootId === parentId
+      ? this.messageTable().get(messageKey(channelId, parentId))
+      : undefined
+    if (parent !== undefined) return blocks
     let resources: FeishuMessage['resources']
     try {
       resources = await transport.getMessageResources(parentId, message.chatId)

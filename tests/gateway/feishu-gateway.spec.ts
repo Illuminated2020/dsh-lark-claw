@@ -710,7 +710,13 @@ describe('Feishu Gateway', () => {
     if (fail) transport.getMessageResources.mockRejectedValue(new Error('permission denied'))
     else transport.getMessageResources.mockResolvedValue([{ type: 'file', fileKey: 'parent-file', fileName: 'report.pdf' }])
     const download = vi.spyOn(transport, 'downloadResource')
-    transport.emit(message({ content: '分析这个文件', replyToMessageId: 'parent', resources: [{ type: 'image', fileKey: 'own-image' }] }))
+    transport.emit(message({
+      threadId: 'topic',
+      rootId: 'parent',
+      content: '分析这个文件',
+      replyToMessageId: 'parent',
+      resources: [{ type: 'image', fileKey: 'own-image' }],
+    }))
     await eventually(() => h.agents[0]?.followed.length === 1)
     expect(transport.getMessageResources).toHaveBeenCalledWith('parent', 'chat-1')
     expect(download).toHaveBeenCalledWith('message-1', 'own-image', 'image')
@@ -727,6 +733,56 @@ describe('Feishu Gateway', () => {
     transport.emit(message({ messageId: 'unquoted', threadId: 'other-topic', content: 'hello' }))
     await eventually(() => h.agents.reduce((n, a) => n + a.followed.length, 0) === 2)
     expect(transport.getMessageResources).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not treat a known topic root as an explicitly replied attachment message', async () => {
+    const h = harness(memoryState(), true)
+    const gateway = await startFeishuGateway(h.ctx, {
+      workspace: '/tmp/dsh-lark-claw-test',
+      channels: [{ id: 'main', appId: 'cli_test', appSecretEnv: 'FEISHU_SECRET' }],
+    }, { create: config => {
+      const transport = new FakeTransport(config.channelId, config)
+      h.transports.set(config.channelId, transport)
+      return transport
+    } })
+    gateways.push(gateway)
+    const transport = h.transports.get('main')!
+
+    transport.emit(message({ messageId: 'topic-root', content: '开始对话' }))
+    await eventually(() => h.agents[0]?.followed.length === 1)
+
+    transport.getMessageResources.mockRejectedValue(new Error('Request failed with status code 400'))
+    transport.emit(message({
+      messageId: 'topic-followup',
+      threadId: 'reply-thread-card-main-1',
+      rootId: 'topic-root',
+      replyToMessageId: 'topic-root',
+      content: '普通续聊，没有回复附件',
+    }))
+    await eventually(() => h.agents[0]?.followed.length === 2)
+
+    expect(transport.getMessageResources).not.toHaveBeenCalled()
+    expect(h.agents[0]!.followed[1].content).toEqual([{ type: 'text', text: '普通续聊，没有回复附件' }])
+
+    transport.emit(message({
+      messageId: 'reset',
+      threadId: 'reply-thread-card-main-1',
+      rootId: 'topic-root',
+      replyToMessageId: 'topic-root',
+      content: '/reset',
+    }))
+    await eventually(() => h.agents.length === 2 && transport.texts.length === 1)
+    transport.emit(message({
+      messageId: 'after-reset',
+      threadId: 'reply-thread-card-main-1',
+      rootId: 'topic-root',
+      replyToMessageId: 'topic-root',
+      content: '重置后的普通续聊',
+    }))
+    await eventually(() => h.agents[1]?.followed.length === 1)
+
+    expect(transport.getMessageResources).not.toHaveBeenCalled()
+    expect(h.agents[1]!.followed[0].content).toEqual([{ type: 'text', text: '重置后的普通续聊' }])
   })
 
   it('enforces source allowlists independently per Channel', async () => {
