@@ -8,8 +8,11 @@
 
 - dsh `0.1.2-rc.1` 或更高版本
 - Node.js `^22.19.0` 或 `>=24.0.0`
+- pnpm；`dsh plugin` 会在 profile 目录中调用它
 - 一个已经配置好的飞书/Lark 应用，以及 App ID 和 App Secret
 - dsh 支持的模型凭据、provider 和 model 配置
+
+飞书应用需要启用机器人能力，在“事件与回调”中选择“使用长连接接收事件”，并订阅 `im.message.receive_v1`。同时开通机器人收发消息、读取消息和获取消息资源所需的应用身份权限。若要接收没有 @ 机器人的群消息，还需申请 `im:message.group_msg`。应用须已发布，或已把测试用户加入可用范围；群聊使用前还要把机器人加入群。
 
 从包管理器安装：
 
@@ -17,10 +20,19 @@
 dsh plugin --profile feishu add dsh-lark-claw
 ```
 
-也可以直接安装 GitHub 仓库：
+上述命令要求 npm 中已有对应版本。
+
+### 从本地源码安装
+
+需要试用尚未发布的提交时，先检出可信的 commit 并在源码目录完成构建，再把本地 checkout 安装进 profile：
 
 ```sh
-dsh plugin --profile feishu add github:Illuminated2020/dsh-lark-claw
+git clone https://github.com/Illuminated2020/dsh-lark-claw.git
+cd dsh-lark-claw
+git checkout <commit-sha>
+pnpm install --frozen-lockfile
+pnpm run build
+dsh plugin --profile feishu add .
 ```
 
 更新已安装的插件：
@@ -29,7 +41,7 @@ dsh plugin --profile feishu add github:Illuminated2020/dsh-lark-claw
 dsh plugin --profile feishu update dsh-lark-claw@latest
 ```
 
-从 GitHub 安装时，pnpm 可能会要求允许插件的构建脚本。确认包内容后，在 `$DSH_HOME/profiles/feishu` 中执行 pnpm 输出的准确 `pnpm approve-builds` 命令，再重新安装。
+本地 checkout 已经构建好 `lib/`，不需要在 profile 安装期间授权构建脚本。直接使用 `github:` spec 会触发 pnpm 的 git 依赖构建限制，配置方式也会随 pnpm 版本变化，因此这里不把它作为推荐安装路径。
 
 ## 配置
 
@@ -77,7 +89,7 @@ cron:
 | `messaging.channels` | 一个或多个飞书/Lark 连接，`type` 填 `feishu` 或 `lark`。 |
 | `params.chat_id` | 主动消息和独立定时任务的默认目标。 |
 | `params.thread_id` | 主动消息的默认话题。 |
-| `params.dm_mode` | `open`、`allowlist`、`pair` 或 `disabled`。 |
+| `params.dm_mode` | `open`、`allowlist` 或 `disabled`。底层 SDK 当前把预留的 `pair` 当作 `open`，不要把它用于访问控制。 |
 | `params.dm_allowlist` | 允许私聊的用户 open_id。 |
 | `params.group_allowlist` | 允许的群聊 ID；为空时接受所有群聊。 |
 | `params.require_mention` | 是否要求群聊消息 @ 机器人。 |
@@ -146,7 +158,7 @@ curl -X POST http://127.0.0.1:8787/api/cronjobs \
 ./scripts/dsh-lark-claw-service.sh stop
 ```
 
-监督脚本会在子进程异常退出后重启，并在停止时转发 `TERM`。`dsh` 不在 `PATH` 时设置 `DSH_BIN`；需要修改状态目录时设置 `DSH_LARK_CLAW_SERVICE_ROOT`。
+这些命令需要在源码仓库或解包后的 npm 包根目录执行。监督脚本会在子进程异常退出后重启，并在停止时转发 `TERM`。`dsh` 不在 `PATH` 时设置 `DSH_BIN`；需要修改状态目录时设置 `DSH_LARK_CLAW_SERVICE_ROOT`。
 
 更新插件后需重启实际运行的 `dsh --profile feishu` 进程。以上 `restart` 只管理由该脚本启动的服务；手动启动的进程需自行停止后重新启动。从本地源码加载时，先执行 `pnpm run build`，再重启。
 

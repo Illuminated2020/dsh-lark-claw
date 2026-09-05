@@ -2,6 +2,22 @@
   "name": "dsh-lark-claw",
   "version": "0.1.0",
   "description": "A standalone Lark/Feishu gateway and persistent cron bundle for DeepSeek Harness",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "feishu",
+    "lark",
+    "cordis",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Illuminated2020/dsh-lark-claw.git"
+  },
+  "homepage": "https://github.com/Illuminated2020/dsh-lark-claw#readme",
+  "bugs": {
+    "url": "https://github.com/Illuminated2020/dsh-lark-claw/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -37,18 +53,25 @@
     "README.md",
     "README.zh.md",
     "assets/feishu-deepseek.png",
-    "guides/advanced.md",
-    "guides/advanced.zh.md",
+    "guides",
     "LICENSE"
   ],
   "scripts": {
-    "build": "rm -rf lib && tsc -p tsconfig.json && tsdown",
+    "build": "pnpm run clean && tsc -p tsconfig.json && tsdown",
     "prepare": "pnpm build",
-    "prepublishOnly": "pnpm build",
+    "prepack": "pnpm check",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "lint": "oxlint src tests",
-    "clean": "rm -rf lib"
+    "lint": "oxlint src tests scripts/*.mjs",
+    "verify:docs": "node scripts/verify-doc-links.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
+    "version:sync": "node scripts/sync-version.mjs",
+    "pack:check": "node scripts/check-packed-package.mjs",
+    "smoke:dsh": "node scripts/smoke-dsh-install.mjs",
+    "check": "pnpm run typecheck && pnpm test && pnpm run lint && pnpm run build && pnpm run verify:package && pnpm run verify:docs",
+    "release:check": "pnpm run check && pnpm run pack:check && pnpm run smoke:dsh",
+    "clean": "node scripts/clean.mjs"
   },
   "packageManager": "pnpm@10.30.1",
   "license": "MIT",
@@ -88,6 +111,7 @@
     "vitest": "^4.1.8"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }

@@ -18,7 +18,14 @@
 
 ## 快速开始
 
-准备好 dsh `0.1.2-rc.1` 或更高版本、Node.js `^22.19.0` 或 `>=24.0.0`，以及已启用机器人和消息接收能力的飞书/Lark 应用。先确认 dsh 的模型和 API Key 已配置可用。
+准备好 dsh `0.1.2-rc.1` 或更高版本、Node.js `^22.19.0` 或 `>=24.0.0`、pnpm，以及一个飞书/Lark 应用。先确认 dsh 的模型和 API Key 已配置可用。
+
+在飞书开放平台中完成以下设置：
+
+- 启用机器人能力。
+- 在“事件与回调”中选择“使用长连接接收事件”，并订阅 `im.message.receive_v1`。
+- 开通机器人收发消息、读取消息和获取消息资源所需的应用身份权限。若要响应没有 @ 机器人的群消息，还需申请 `im:message.group_msg`。
+- 发布应用或把测试用户加入可用范围；在群聊中使用时，还要把机器人加入群。
 
 **安装插件：**
 
@@ -26,12 +33,14 @@
 dsh plugin --profile feishu add dsh-lark-claw
 ```
 
+`dsh plugin` 会调用 pnpm 管理 profile。npm 尚未发布所需版本时，请按[本地源码安装](guides/advanced.zh.md#从本地源码安装)操作。
+
 **配置机器人：**
 
 参考 [配置示例](config.yaml.example)，将所需字段填入 `~/.dsh/config.yaml`（设置了 `DSH_HOME` 时使用该目录）。已有配置时合并字段，不要直接覆盖。
 
 - 填写应用的 App ID、App Secret。
-- 设置允许使用机器人的用户和群聊。
+- 设置允许使用机器人的用户和群聊。`ou_xxx` 是用户 open_id，`oc_xxx` 是群聊 chat_id；示例默认启用私聊 allowlist，保留占位值会拒绝所有私聊。
 - 将工作目录改成你希望机器人处理文件的绝对路径，并填写可用的模型配置。
 
 各字段含义见 [配置指南](guides/advanced.zh.md#配置)。
@@ -83,6 +92,7 @@ dsh --profile feishu
 - [定时任务 API](guides/advanced.zh.md#定时任务)
 - [附件存储说明](guides/advanced.zh.md#文件和图片)
 - [本地开发](guides/advanced.zh.md#开发)
+- [发布维护](guides/releasing.zh.md)
 
 ## 许可证
 

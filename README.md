@@ -18,7 +18,14 @@ Message the bot directly or mention it in a group to explore a project, analyze 
 
 ## Quickstart
 
-You need dsh `0.1.2-rc.1` or later, Node.js `^22.19.0` or `>=24.0.0`, and a Lark/Feishu app with bot and message-receiving capabilities enabled. Make sure your model and API key already work in dsh.
+You need dsh `0.1.2-rc.1` or later, Node.js `^22.19.0` or `>=24.0.0`, pnpm, and a Lark/Feishu app. Make sure your model and API key already work in dsh.
+
+Configure the app in the Lark/Feishu developer console:
+
+- Enable the bot capability.
+- Select long-connection event delivery and subscribe to `im.message.receive_v1`.
+- Grant the app-identity permissions needed to receive, send, read, and download message resources. Responding to group messages without a bot mention also requires `im:message.group_msg`.
+- Publish the app or add test users to its availability scope. Add the bot to each group where it will be used.
 
 **Install the plugin:**
 
@@ -26,12 +33,14 @@ You need dsh `0.1.2-rc.1` or later, Node.js `^22.19.0` or `>=24.0.0`, and a Lark
 dsh plugin --profile feishu add dsh-lark-claw
 ```
 
+`dsh plugin` uses pnpm to manage the profile. If the required version is not yet on npm, follow the [local source installation](guides/advanced.md#install-from-local-source) instructions.
+
 **Configure your bot:**
 
 Use the [example configuration](config.yaml.example) to fill in `~/.dsh/config.yaml` (or the directory set by `DSH_HOME`). Merge the required fields if you already have a configuration.
 
 - Enter your app's App ID and App Secret.
-- Set the users and groups allowed to use the bot.
+- Set the users and groups allowed to use the bot. `ou_xxx` is a user open_id and `oc_xxx` is a chat_id. The example enables a direct-message allowlist, so leaving its placeholder rejects every direct message.
 - Choose an absolute workspace path for the bot's files and configure an available model.
 
 See the [configuration guide](guides/advanced.md#configure) for field descriptions.
@@ -83,6 +92,7 @@ You can also ask it to list or delete reminders. Scheduled tasks are saved, but 
 - [Scheduled task API](guides/advanced.md#scheduled-tasks)
 - [Attachment storage](guides/advanced.md#files-and-images)
 - [Local development](guides/advanced.md#development)
+- [Release maintenance](guides/releasing.md)
 
 ## License
 

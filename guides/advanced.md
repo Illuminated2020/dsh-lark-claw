@@ -8,8 +8,11 @@ Requirements:
 
 - dsh `0.1.2-rc.1` or later
 - Node.js `^22.19.0` or `>=24.0.0`
+- pnpm, which `dsh plugin` invokes inside the profile directory
 - A Lark/Feishu app with an App ID and App Secret
 - A model credential and provider configuration accepted by dsh
+
+Enable the bot capability in the developer console, select long-connection event delivery, and subscribe to `im.message.receive_v1`. Grant the app-identity permissions needed to receive, send, read, and download message resources. Receiving group messages without a bot mention also requires `im:message.group_msg`. Publish the app or add test users to its availability scope, and add the bot to every group where it will be used.
 
 Install from the package registry:
 
@@ -17,10 +20,19 @@ Install from the package registry:
 dsh plugin --profile feishu add dsh-lark-claw
 ```
 
-Or install the repository directly:
+This command requires the selected version to exist on npm.
+
+### Install from local source
+
+To try an unpublished revision, check out a trusted commit, build it in the source directory, and install the local checkout into the profile:
 
 ```sh
-dsh plugin --profile feishu add github:Illuminated2020/dsh-lark-claw
+git clone https://github.com/Illuminated2020/dsh-lark-claw.git
+cd dsh-lark-claw
+git checkout <commit-sha>
+pnpm install --frozen-lockfile
+pnpm run build
+dsh plugin --profile feishu add .
 ```
 
 To update an installed package:
@@ -29,7 +41,7 @@ To update an installed package:
 dsh plugin --profile feishu update dsh-lark-claw@latest
 ```
 
-When installing from GitHub, pnpm may ask you to allow the package build step. Review the package and then run the exact `pnpm approve-builds` command shown by pnpm in `$DSH_HOME/profiles/feishu` before retrying the install.
+The local checkout already contains its built `lib/` output, so the profile installation needs no build-script permission. A direct `github:` spec triggers pnpm's git-dependency build policy, whose configuration varies by pnpm version, and is therefore not the recommended installation path here.
 
 ## Configure
 
@@ -77,7 +89,7 @@ cron:
 | `messaging.channels` | One or more Feishu/Lark connections. `type` is `feishu` or `lark`. |
 | `params.chat_id` | Default destination for proactive and independent scheduled messages. |
 | `params.thread_id` | Default topic for proactive messages. |
-| `params.dm_mode` | `open`, `allowlist`, `pair` or `disabled`. |
+| `params.dm_mode` | `open`, `allowlist`, or `disabled`. The SDK currently treats the reserved `pair` value as `open`; do not use it for access control. |
 | `params.dm_allowlist` | Sender open IDs accepted for direct messages. |
 | `params.group_allowlist` | Group chat IDs. Empty means all groups. |
 | `params.require_mention` | Require a bot mention in group messages. |
@@ -146,7 +158,7 @@ Attachments in the current message and the directly replied message are included
 ./scripts/dsh-lark-claw-service.sh stop
 ```
 
-The supervisor restarts a child after an unexpected exit and forwards `TERM` during shutdown. Set `DSH_BIN` when `dsh` is not on `PATH`, or `DSH_LARK_CLAW_SERVICE_ROOT` to choose another state directory.
+Run these commands from the source checkout or an extracted npm package root. The supervisor restarts a child after an unexpected exit and forwards `TERM` during shutdown. Set `DSH_BIN` when `dsh` is not on `PATH`, or `DSH_LARK_CLAW_SERVICE_ROOT` to choose another state directory.
 
 After updating the plugin, restart the running `dsh --profile feishu` process. The `restart` command above only manages a service started by this script; stop and relaunch manually started processes separately. When loading local source changes, run `pnpm run build` before restarting.
 
