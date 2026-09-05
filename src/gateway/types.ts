@@ -76,9 +76,19 @@ export interface FeishuSendReceipt {
   readonly threadId?: string
 }
 
+/** Verified SDK callback envelope; form fields remain untrusted until decoded. */
+export interface FeishuCardAction {
+  readonly messageId: string
+  readonly chatId: string
+  readonly userId: string
+  readonly value: unknown
+  readonly formValue?: unknown
+}
+
 /** Provider-neutral transport adapter; production and tests implement this seam. */
 export interface FeishuTransport {
   readonly channelId: string
+  onCardAction(handler: (action: FeishuCardAction) => void): () => void
   onMessage(handler: (message: FeishuMessage) => void | Promise<void>): () => void
   connect(): Promise<void>
   disconnect(): Promise<void>
@@ -142,6 +152,8 @@ export interface FeishuGatewayConfig {
   readonly defaultChannelId?: string
   /** Minimum interval between live card patches; 0 flushes every observed frame. */
   readonly streamUpdateIntervalMs?: number
+  /** Maximum human response wait in milliseconds; defaults to ten minutes. */
+  readonly interactionTimeoutMs?: number
   /** Maximum card markdown body before the pure card projection bounds it. */
   readonly cardMarkdownLimit?: number
 }

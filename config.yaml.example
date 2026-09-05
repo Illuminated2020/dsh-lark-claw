@@ -30,6 +30,7 @@ messaging:
 gateway:
   workspace: /srv/dsh/workspace
   stream_update_interval_ms: 300
+  interaction_timeout_ms: 600000
   card_markdown_limit: 28000
 
 server:

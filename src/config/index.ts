@@ -69,6 +69,7 @@ const yamlConfigSchema = zod.object({
     provider: zod.string().min(1).optional(),
     model: zod.string().min(1).optional(),
     stream_update_interval_ms: zod.number().int().nonnegative().optional(),
+    interaction_timeout_ms: zod.number().int().positive().max(2_147_483_647).optional(),
     card_markdown_limit: zod.number().int().positive().optional(),
   }).strict().optional(),
   cron: zod.object({
@@ -259,6 +260,7 @@ function fromYaml(path: string, input: unknown): DshLarkClawConfig {
       channels,
       ...parsed.messaging?.default_channel_id === undefined ? {} : { defaultChannelId: parsed.messaging.default_channel_id },
       ...gateway?.stream_update_interval_ms === undefined ? {} : { streamUpdateIntervalMs: gateway.stream_update_interval_ms },
+      ...gateway?.interaction_timeout_ms === undefined ? {} : { interactionTimeoutMs: gateway.interaction_timeout_ms },
       ...gateway?.card_markdown_limit === undefined ? {} : { cardMarkdownLimit: gateway.card_markdown_limit },
     },
     cron: {

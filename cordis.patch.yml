@@ -36,6 +36,7 @@
         channels: !!js ctx.dshLarkClawConfig.gateway.channels
         defaultChannelId: !!js ctx.dshLarkClawConfig.gateway.defaultChannelId
         streamUpdateIntervalMs: !!js ctx.dshLarkClawConfig.gateway.streamUpdateIntervalMs ?? 300
+        interactionTimeoutMs: !!js ctx.dshLarkClawConfig.gateway.interactionTimeoutMs ?? 600000
         cardMarkdownLimit: !!js ctx.dshLarkClawConfig.gateway.cardMarkdownLimit ?? 28000
 
     - id: feishu-cron

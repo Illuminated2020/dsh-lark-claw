@@ -5,7 +5,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, ImageBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, ImageBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { parseCommand } from '@deepseek-ai/dsh-commands'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -20,6 +20,7 @@ import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { boundExecutionCard, renderFeishuCard, splitMarkdownByTables } from './card.ts'
 import { feishuGatewayDomainSpec } from './state.ts'
 import { createLarkFeishuTransportFactory } from './transport.ts'
+import { FeishuInteractions } from './interactions.ts'
 import { fileMessageContent, saveMessageResource } from './message-resources.ts'
 import type {
   ExecutionCardProjection,
@@ -77,6 +78,7 @@ export const Config: z<FeishuGatewayConfig> = z.object({
   }).required()).required(),
   defaultChannelId: z.string(),
   streamUpdateIntervalMs: z.number().step(1).min(0).default(300),
+  interactionTimeoutMs: z.number().step(1).min(1).max(2_147_483_647).default(600_000),
   cardMarkdownLimit: z.number().step(1).min(1).default(28_000),
 })
 
@@ -110,6 +112,10 @@ type GatewayDomain = Domain<typeof feishuGatewayDomainSpec>
 function assertConfig(config: FeishuGatewayConfig): void {
   if (!isAbsolute(config.workspace)) throw new Error('feishu-gateway workspace must be an absolute path')
   if (config.channels.length === 0) throw new Error('feishu-gateway requires at least one channel')
+  if (config.interactionTimeoutMs !== undefined && (!Number.isInteger(config.interactionTimeoutMs)
+    || config.interactionTimeoutMs < 1 || config.interactionTimeoutMs > 2_147_483_647)) {
+    throw new Error('feishu-gateway interactionTimeoutMs must be an integer between 1 and 2147483647')
+  }
   const ids = new Set<string>()
   for (const channel of config.channels) {
     if (channel.id.trim() !== channel.id || channel.id === '') throw new Error('feishu-gateway channel id must be non-empty and trimmed')
@@ -278,7 +284,7 @@ function cardSteps(events: readonly SessionEvent[]): ExecutionCardStep[] {
         if (block.type === 'tool-call') {
           const callId = String(block.id)
           const call = calls.get(callId)
-          const step = toolStep(block.name, block.arguments, call?.status ?? 'completed')
+          const step = toolStep(block.name, block.arguments, call?.status ?? 'running')
           if (step !== undefined) {
             steps.push(step)
             rendered.add(callId)
@@ -328,36 +334,25 @@ function runningProjection(
   return { title, status: 'running', markdown, ...thinking === undefined ? {} : { thinking }, steps }
 }
 
-function durableStepState(events: readonly SessionEvent[]): { readonly callIds: ReadonlySet<string>; readonly hasReasoning: boolean } {
-  const callIds = new Set<string>()
-  let hasReasoning = false
-  for (const event of events) {
-    if (event.type === 'assistant/message') {
-      for (const block of event.data.message.content) {
-        if (block.type === 'reasoning' && block.text !== '') hasReasoning = true
-        if (block.type === 'tool-call') callIds.add(String(block.id))
-      }
-    }
-    if (event.type === 'tool/call') callIds.add(String(event.data.callId))
-  }
-  return { callIds, hasReasoning }
-}
-
 function liveSteps(live: LiveCard, events: readonly SessionEvent[]): ExecutionCardStep[] {
   const durable = cardSteps(events)
-  const durableState = durableStepState(events)
+  const callIds = new Set(events.flatMap(event => event.type === 'tool/call'
+    ? [String(event.data.callId)]
+    : event.type === 'assistant/message'
+      ? event.data.message.content.flatMap(block => block.type === 'tool-call' ? [String(block.id)] : [])
+      : []))
   const transient: ExecutionCardStep[] = []
-  if (live.streamedThinking !== '' && !durableState.hasReasoning) transient.push({
+  if (live.streamedThinking !== '') transient.push({
     label: live.streamedThinking,
     icon: 'robot_outlined',
     status: 'running',
   })
   for (const [callId, call] of live.streamedToolCalls) {
-    if (durableState.callIds.has(callId)) continue
+    if (callIds.has(callId)) continue
     const step = toolStep(call.name, call.argumentsText, 'running')
     if (step !== undefined) transient.push(step)
   }
-  if (durable.length === 0) return transient.length === 0 ? [...live.latest.steps] : transient
+  if (durable.length === 0) return transient.length === 0 ? [{ label: 'Thinking...', icon: 'robot_outlined', status: 'running' }] : transient
   return [...durable, ...transient]
 }
 
@@ -395,6 +390,7 @@ async function flushPersistence(ctx: Context): Promise<void> {
 
 /** The Gateway owns routing and external projection, while dsh owns execution. */
 export class FeishuGateway implements FeishuGatewayService {
+  private readonly interactions: FeishuInteractions
   private readonly channels = new Map<string, { readonly config: FeishuChannelConfig; readonly transport: FeishuTransport }>()
   private readonly threads = new Map<string, RuntimeThread>()
   private readonly sessionThreads = new Map<string, string>()
@@ -416,6 +412,7 @@ export class FeishuGateway implements FeishuGatewayService {
     private readonly factory: FeishuTransportFactory,
   ) {
     assertConfig(config)
+    this.interactions = new FeishuInteractions(ctx, config.interactionTimeoutMs ?? 600_000)
     this.intervalMs = config.streamUpdateIntervalMs ?? 300
     this.markdownLimit = config.cardMarkdownLimit ?? 28_000
   }
@@ -455,6 +452,7 @@ export class FeishuGateway implements FeishuGatewayService {
           appId: channelConfig.appId,
           updatedAt: Date.now(),
         })
+        this.unsubscribers.push(transport.onCardAction(action => this.interactions.handle(channelConfig.id, action)))
         this.unsubscribers.push(transport.onMessage((message) => { this.enqueue(channelConfig.id, message) }))
       }
       await Promise.all([...this.channels.values()].map(channel => channel.transport.connect()))
@@ -532,6 +530,7 @@ export class FeishuGateway implements FeishuGatewayService {
   async close(): Promise<void> {
     if (this.closing) return
     this.closing = true
+    this.interactions.close()
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe()
     this.commandsDisposer?.()
     this.commandsDisposer = undefined
@@ -631,7 +630,7 @@ export class FeishuGateway implements FeishuGatewayService {
       }
 
       const userMessage = createUserMessage({ content: blocks, source: { kind: 'user' } })
-      await this.runTurn(channel.transport, this.targetOf(message), this.replyOptions(message), runtime, userMessage)
+      await this.runTurn(channel.transport, this.targetOf(message), this.replyOptions(message), runtime, userMessage, message.senderId)
       await this.messageTable().update(messageKey(channelId, message.messageId), current => ({ ...current, state: 'completed', updatedAt: Date.now() }))
     } catch (error: unknown) {
       if (runtime !== undefined) {
@@ -888,6 +887,7 @@ export class FeishuGateway implements FeishuGatewayService {
     replyOptions: FeishuSendOptions,
     runtime: RuntimeThread,
     userMessage: ReturnType<typeof createUserMessage>,
+    userId?: string,
   ): Promise<void> {
     const firstSeq = runtime.agent.session.seq
     const live: LiveCard = {
@@ -911,26 +911,73 @@ export class FeishuGateway implements FeishuGatewayService {
     await this.bindReplyThread(runtime, transport.channelId, target.chatId, initial.threadId)
     runtime.record = { ...runtime.record, cardMessageId: initial.messageId, updatedAt: Date.now() }
     await this.threadTable().put(runtime.key, runtime.record)
-    const disposeStream = this.ctx.on('session/event', (session, event) => {
-      if (session !== runtime.agent.session || live.settled || event.type !== 'assistant/chunk') return
-      const snapshot = runtime.agent.session.snapshotEvents().slice(firstSeq)
-      if (event.data.chunk.type === 'reasoning-delta') live.streamedThinking += event.data.chunk.text
-      if (event.data.chunk.type === 'tool-call-delta') {
-        const existing = live.streamedToolCalls.get(String(event.data.chunk.id))
-        live.streamedToolCalls.set(String(event.data.chunk.id), {
-          name: event.data.chunk.name ?? existing?.name ?? 'tool',
-          argumentsText: `${existing?.argumentsText ?? ''}${event.data.chunk.argumentsDelta}`,
-        })
-      }
-      if (event.data.chunk.type !== 'text-delta' && event.data.chunk.type !== 'reasoning-delta' && event.data.chunk.type !== 'tool-call-delta') return
-      const text = event.data.chunk.type === 'text-delta' ? event.data.chunk.text : ''
-      const current = live.latest.markdown === '正在执行…' ? '' : live.latest.markdown
+    let streamedText = ''
+    let usesLiveStream = false
+    const snapshot = (): readonly SessionEvent[] => runtime.agent.session.snapshotEvents().slice(firstSeq)
+    const resetAttempt = (): void => {
+      streamedText = ''
+      live.streamedThinking = ''
+      live.streamedToolCalls.clear()
+    }
+    const refresh = (): void => {
+      const events = snapshot()
       live.latest = runningProjection(
-        'DeepSeek Harness',
-        `${current}${text}`,
-        liveSteps(live, snapshot),
+        live.latest.title,
+        streamedText || finalProjection(events, live.latest.title).markdown,
+        liveSteps(live, events),
       )
       this.scheduleCardPatch(live)
+    }
+    const consumeChunk = (chunk: StreamChunk): void => {
+      if (chunk.type === 'reasoning-delta') live.streamedThinking += chunk.text
+      else if (chunk.type === 'tool-call-delta') {
+        const existing = live.streamedToolCalls.get(String(chunk.id))
+        live.streamedToolCalls.set(String(chunk.id), {
+          name: chunk.name ?? existing?.name ?? 'tool',
+          argumentsText: `${existing?.argumentsText ?? ''}${chunk.argumentsDelta}`,
+        })
+      } else if (chunk.type === 'text-delta') streamedText += chunk.text
+      else return
+      refresh()
+    }
+    // Newer hosts publish transient frames separately from the durable Session log.
+    // Keep the narrow public-event compatibility boundary until the peer minimum
+    // includes AssistantStreamFrame; do not import an adjacent source checkout.
+    const onStream = this.ctx.on.bind(this.ctx) as unknown as (
+      name: 'agent/assistant-stream',
+      listener: (payload: { agent: Agent; frame:
+        | { type: 'start' | 'end' }
+        | { type: 'chunk'; chunk: StreamChunk }
+      }) => void,
+    ) => () => void
+    const disposeStream = onStream('agent/assistant-stream', ({ agent, frame }) => {
+      if (agent !== runtime.agent || live.settled) return
+      usesLiveStream = true
+      if (frame.type === 'chunk') consumeChunk(frame.chunk)
+      else {
+        resetAttempt()
+        refresh()
+      }
+    })
+    const disposeSession = this.ctx.on('session/event', (session, event) => {
+      if (session !== runtime.agent.session || live.settled) return
+      if (event.type === 'assistant/chunk') {
+        if (!usesLiveStream) consumeChunk(event.data.chunk)
+      } else if (event.type === 'assistant/message' || event.type === 'tool/call' || event.type === 'tool/result') {
+        if (event.type === 'assistant/message') resetAttempt()
+        refresh()
+      }
+    })
+    let waitingCount = 0
+    const disposeInteractions = userId === undefined ? () => {} : this.interactions.bind({
+      agent: runtime.agent, transport, target: { chatId: runtime.record.chatId, threadId: runtime.record.threadId },
+      anchor: initial.messageId, userId,
+      waiting: active => {
+        if (live.settled) return
+        waitingCount += active ? 1 : -1
+        live.latest = { ...live.latest, title: waitingCount > 0 ? '等待你的确认或回答' : 'DeepSeek Harness' }
+        this.scheduleCardPatch(live)
+      },
     })
     try {
       runtime.agent.followup(userMessage)
@@ -970,7 +1017,9 @@ export class FeishuGateway implements FeishuGatewayService {
       throw error
     } finally {
       if (live.timer !== undefined) clearTimeout(live.timer)
+      disposeInteractions()
       disposeStream()
+      disposeSession()
     }
   }
 
@@ -993,7 +1042,10 @@ export class FeishuGateway implements FeishuGatewayService {
     const projection = live.latest
     live.tail = live.tail
       .then(async () => live.transport.updateCard(messageId, await this.renderCard(live.transport, projection)))
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : String(error)
+        this.ctx.logger.warn(`feishu-gateway live card ${JSON.stringify(messageId)} update failed: ${reason}`)
+      })
   }
 
   private async sendProducedAttachments(

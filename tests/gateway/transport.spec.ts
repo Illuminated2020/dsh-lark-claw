@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
-import { Domain, type LarkChannel } from '@larksuiteoapi/node-sdk'
+import { Domain, normalizeCardAction, type LarkChannel } from '@larksuiteoapi/node-sdk'
 
 const { createLarkChannel } = vi.hoisted(() => ({ createLarkChannel: vi.fn() }))
 
@@ -44,6 +44,22 @@ describe('LarkFeishuTransport message lifecycle', () => {
     const get = vi.fn(async () => ({ data: { items: [item] } }))
     const transport = new LarkFeishuTransport('main', { rawClient: { im: { v1: { message: { get } } } } } as unknown as LarkChannel)
     await expect(transport.getMessageResources('parent', 'chat')).rejects.toThrow()
+  })
+
+  it('preserves submitted form fields from SDK card callbacks', () => {
+    let callback!: (event: NonNullable<ReturnType<typeof normalizeCardAction>>) => void
+    const off = vi.fn()
+    const on = vi.fn((_name: string, handler: typeof callback) => { callback = handler; return off })
+    const transport = new LarkFeishuTransport('main', { on } as unknown as LarkChannel)
+    const handler = vi.fn()
+    const unsubscribe = transport.onCardAction(handler)
+    callback(normalizeCardAction({
+      context: { open_message_id: 'card', open_chat_id: 'chat' }, operator: { open_id: 'owner' },
+      action: { tag: 'button', value: { requestId: 'id', decision: 'submit' }, form_value: { text_0: 'Answer', choice_0: ['0', '1'] } },
+    }, { includeRaw: true })!)
+    expect(handler).toHaveBeenCalledWith({ messageId: 'card', chatId: 'chat', userId: 'owner',
+      value: { requestId: 'id', decision: 'submit' }, formValue: { text_0: 'Answer', choice_0: ['0', '1'] } })
+    unsubscribe(); expect(off).toHaveBeenCalled()
   })
 
   it('resolves a configured topic to a message before sending a scheduled card or media', async () => {
@@ -116,7 +132,7 @@ describe('LarkFeishuTransport message lifecycle', () => {
       domain: 'lark',
     })
 
-    expect(createLarkChannel).toHaveBeenCalledWith(expect.objectContaining({ domain: Domain.Lark }))
+    expect(createLarkChannel).toHaveBeenCalledWith(expect.objectContaining({ domain: Domain.Lark, includeRawEvent: true }))
   })
 
 })

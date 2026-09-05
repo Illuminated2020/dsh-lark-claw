@@ -77,6 +77,12 @@ File format support depends on the Agent's available tools.
 
 You can also ask it to list or delete reminders. Scheduled tasks are saved, but the service must be running when they are due.
 
+### Approvals and questions
+
+When an operation needs permission, the bot posts an Allow once / Reject card in the same topic. Questions appear as choices or text fields; submitting an answer continues the task. Only the user who started the current task can respond. Requests expire after ten minutes by default.
+
+Enable card interaction callbacks in your Feishu app first; see [interaction setup](guides/advanced.md#approvals-and-user-questions).
+
 ### Commands
 
 | Command | Action |

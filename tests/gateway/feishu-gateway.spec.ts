@@ -15,6 +15,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Config, startFeishuGateway } from '../../src/gateway/index.ts'
 import type {
   FeishuGatewayConfig,
+  FeishuCardAction,
   FeishuMessage,
   FeishuSendOptions,
   FeishuTarget,
@@ -27,7 +28,7 @@ afterEach(async () => {
   for (const path of testWorkspaces.splice(0)) await rm(path, { recursive: true, force: true })
 })
 
-type AnyHandler = (payload: any) => void
+type AnyHandler = (...payload: any[]) => void
 
 interface MemoryState {
   readonly tables: Map<string, Map<string, any>>
@@ -118,6 +119,13 @@ class FakeTransport implements FeishuTransport {
     return { messageId: `file-${this.channelId}-${String(this.files.length)}` }
   }
 
+  private actionHandler: ((action: FeishuCardAction) => void) | undefined
+  onCardAction(handler: (action: FeishuCardAction) => void): () => void {
+    this.actionHandler = handler
+    return () => { this.actionHandler = undefined }
+  }
+  emitAction(action: FeishuCardAction): void { this.actionHandler?.(action) }
+
   getMessageResources = vi.fn(async (): Promise<FeishuMessage['resources']> => [])
 
   async downloadResource(_messageId: string, fileKey: string, type: 'image' | 'file'): Promise<Uint8Array> {
@@ -140,7 +148,7 @@ class FakeAgent {
 
   constructor(
     readonly id: SessionId,
-    private readonly emit: (event: string, payload: unknown) => void,
+    private readonly emit: (event: string, ...payload: unknown[]) => void,
     private readonly persisted: Set<string>,
     private readonly turnGate?: Promise<void>,
   ) {
@@ -157,17 +165,7 @@ class FakeAgent {
     this.idle = new Promise((resolve) => { this.resolveIdle = resolve })
     this.followed.push(message)
     this.events.push({ type: 'user/message', seq: this.events.length, data: { content: [{ type: 'text', text: 'user' }] } })
-    this.emit('agent/assistant-stream', {
-      agent: this,
-      frame: {
-        type: 'chunk',
-        attemptId: 'attempt-1',
-        revision: 1,
-        index: 0,
-        time: Date.now(),
-        chunk: { type: 'text-delta', text: '来自 dsh 的回答' },
-      },
-    })
+    this.append('assistant/chunk', { chunk: { type: 'text-delta', text: '来自 dsh 的回答' } })
     const finish = (): void => {
       if (this.status !== 'running') return
       this.events.push({
@@ -185,6 +183,12 @@ class FakeAgent {
     else void this.turnGate.then(finish)
   }
 
+  append(type: string, data: unknown): void {
+    const event = { type, seq: this.events.length, data }
+    this.events.push(event)
+    this.emit('session/event', this.session, event)
+  }
+
   whenIdle(): Promise<void> { return this.idle }
   cancel(): void {
     this.status = 'idle'
@@ -200,7 +204,7 @@ interface Harness {
   readonly agents: FakeAgent[]
   readonly creates: SessionId[]
   readonly resumes: SessionId[]
-  readonly emit: (event: string, payload: unknown) => void
+  readonly emit: (event: string, ...payload: unknown[]) => void
   readonly attachments: any
 }
 
@@ -218,8 +222,8 @@ function harness(state = memoryState(), withAttachments = false, turnGate?: Prom
       readFileStream: vi.fn(),
     }
     : undefined
-  const emit = (event: string, payload: unknown): void => {
-    for (const handler of eventHandlers.get(event) ?? []) handler(payload)
+  const emit = (event: string, ...payload: unknown[]): void => {
+    for (const handler of eventHandlers.get(event) ?? []) handler(...payload)
   }
   const makeAgent = (id: SessionId): AgentHandle => {
     const agent = new FakeAgent(id, emit, state.persistedSessions, turnGate)
@@ -318,6 +322,63 @@ afterEach(async () => {
 })
 
 describe('Feishu Gateway', () => {
+  it.each(['live', 'legacy'])('updates steps before turn end via %s events', async mode => {
+    let finish!: () => void
+    const h = harness(memoryState(), false, new Promise<void>(resolve => { finish = resolve }))
+    const gateway = await startFeishuGateway(h.ctx, {
+      workspace: '/tmp/dsh-lark-claw-test', streamUpdateIntervalMs: 5,
+      channels: [{ id: 'main', appId: 'cli_test', appSecretEnv: 'FEISHU_SECRET' }],
+    }, { create: config => {
+      const transport = new FakeTransport(config.channelId, config)
+      h.transports.set(config.channelId, transport)
+      return transport
+    } })
+    gateways.push(gateway)
+    const transport = h.transports.get('main')!
+    transport.emit(message({ threadId: 'topic' }))
+    await eventually(() => h.agents[0]?.followed.length === 1)
+    const agent = h.agents[0]!
+    const chunk = (value: unknown): void => {
+      if (mode === 'live') h.emit('agent/assistant-stream', { agent, frame: { type: 'chunk', chunk: value } })
+      else agent.append('assistant/chunk', { chunk: value })
+    }
+    chunk({ type: 'reasoning-delta', text: '检查文件' })
+    await eventually(() => JSON.stringify(transport.updates.at(-1) ?? {}).includes('检查文件'))
+    agent.append('assistant/message', { message: { content: [{ type: 'reasoning', text: '检查文件' }] } })
+    agent.append('tool/call', { callId: 'call-1', name: 'read', arguments: '{"path":"/tmp/first"}' })
+    await eventually(() => JSON.stringify(transport.updates.at(-1) ?? {}).includes('/tmp/first'))
+    agent.append('tool/call', { callId: 'call-2', name: 'read', arguments: '{"path":"/tmp/second"}' })
+    await eventually(() => JSON.stringify(transport.updates.at(-1) ?? {}).includes('3 steps'))
+    const beforeResult = transport.updates.length
+    agent.append('tool/result', { message: { source: { callId: 'call-1' } } })
+    await eventually(() => transport.updates.length > beforeResult)
+    chunk({ type: 'reasoning-delta', text: '下一步检查' })
+    await eventually(() => JSON.stringify(transport.updates.at(-1) ?? {}).includes('下一步检查'))
+    if (mode === 'live') {
+      h.emit('agent/assistant-stream', { agent, frame: { type: 'end', outcome: { kind: 'abandoned' } } })
+      await eventually(() => !JSON.stringify(transport.updates.at(-1) ?? {}).includes('下一步检查'))
+      h.emit('agent/assistant-stream', { agent, frame: { type: 'start', attemptId: 'retry' } })
+      chunk({ type: 'text-delta', text: '重试输出' })
+      chunk({ type: 'tool-call-delta', id: 'call-3', name: 'read', argumentsDelta: '{"path":"/tmp/third"}' })
+      await eventually(() => JSON.stringify(transport.updates.at(-1) ?? {}).includes('/tmp/third'))
+      agent.append('assistant/message', { message: { content: [{ type: 'tool-call', id: 'call-3', name: 'read', arguments: '{"path":"/tmp/third"}' }] } })
+      agent.append('tool/call', { callId: 'call-3', name: 'read', arguments: '{"path":"/tmp/third"}' })
+      const beforeEnd = transport.updates.length
+      h.emit('agent/assistant-stream', { agent, frame: { type: 'end', outcome: { kind: 'committed' } } })
+      await eventually(() => transport.updates.length > beforeEnd)
+      expect(JSON.stringify(transport.updates.at(-1))).toContain('4 steps')
+      expect(JSON.stringify(transport.updates.at(-1)).match(/\/tmp\/third/g)).toHaveLength(1)
+    }
+    expect(agent.status).toBe('running')
+    expect(agent.session.snapshotEvents().some((event: any) => event.type === 'turn/end')).toBe(false)
+    finish()
+    await eventually(() => agent.status === 'idle' && JSON.stringify(transport.updates.at(-1) ?? {}).includes('Show '))
+    const settledUpdates = transport.updates.length
+    h.emit('agent/assistant-stream', { agent, frame: { type: 'chunk', chunk: { type: 'text-delta', text: 'late' } } })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(transport.updates).toHaveLength(settledUpdates)
+  })
+
   it('treats omitted source allowlists as open after config normalization', async () => {
     const h = harness()
     const gateway = await startFeishuGateway(h.ctx, Config({
@@ -337,6 +398,39 @@ describe('Feishu Gateway', () => {
     transport.emit(message({ messageId: 'group-message', chatType: 'group', chatId: 'group-1' }))
     await eventually(() => h.agents.reduce((total, agent) => total + agent.followed.length, 0) === 2)
     expect(transport.texts).toHaveLength(0)
+  })
+
+  it('answers approval callbacks while an active turn blocks later topic messages', async () => {
+    let continueTurn!: () => void
+    const gate = new Promise<void>(resolve => { continueTurn = resolve })
+    const h = harness(memoryState(), false, gate)
+    const on = vi.spyOn(h.ctx, 'on')
+    const gateway = await startFeishuGateway(h.ctx, {
+      workspace: '/tmp/dsh-lark-claw-test', streamUpdateIntervalMs: 0,
+      channels: [{ id: 'main', appId: 'cli_test', appSecretEnv: 'FEISHU_SECRET' }],
+    }, { create: config => {
+      const transport = new FakeTransport(config.channelId, config)
+      h.transports.set(config.channelId, transport)
+      return transport
+    } })
+    gateways.push(gateway)
+    const transport = h.transports.get('main')!
+    transport.emit(message({ threadId: 'topic' }))
+    await eventually(() => h.agents[0]?.followed.length === 1)
+    const listener = on.mock.calls.find(call => call[0] === 'approval/request')![1] as any
+    const decision = listener({ agent: h.agents[0], toolName: 'bash', reason: 'Write requested config' }, () => Promise.resolve('unavailable'))
+    await eventually(() => transport.cards.length === 2)
+    const prompt = transport.cards[1]!
+    expect(prompt.target).toEqual({ chatId: 'chat-1', threadId: 'topic' })
+    expect(prompt.options).toEqual({ replyTo: transport.cards[0]!.messageId, replyInThread: true })
+    transport.emit(message({ messageId: 'queued', threadId: 'topic', content: 'Later task' }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(h.agents[0]!.followed).toHaveLength(1)
+    const requestId = JSON.stringify(prompt.card).match(/"requestId":"([^"]+)"/)![1]
+    transport.emitAction({ messageId: prompt.messageId, chatId: 'chat-1', userId: 'user-1', value: { requestId, decision: 'allow' } })
+    expect(await decision).toBe('allowed-once')
+    continueTurn()
+    await eventually(() => h.agents[0]!.followed.length === 2)
   })
 
   it('routes one Thread to one durable Session, emits one final card, and deduplicates message ids', async () => {

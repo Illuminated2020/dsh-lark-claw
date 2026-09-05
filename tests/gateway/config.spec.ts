@@ -16,6 +16,7 @@ describe('Feishu Gateway configuration schema', () => {
       }],
     })
 
+    expect(config.interactionTimeoutMs).toBe(600_000)
     expect(config.channels[0]?.proactiveTarget).toBeUndefined()
   })
 
@@ -24,6 +25,8 @@ describe('Feishu Gateway configuration schema', () => {
     const path = join(directory, 'config.yaml')
     try {
       await writeFile(path, [
+        'gateway:',
+        '  interaction_timeout_ms: 12345',
         'messaging:',
         '  channels:',
         '    - id: lark-main',
@@ -34,6 +37,7 @@ describe('Feishu Gateway configuration schema', () => {
       ].join('\n'))
 
       const config = await loadDshLarkClawConfig(path)
+      expect(config.gateway.interactionTimeoutMs).toBe(12345)
       expect(config.gateway.channels[0]?.domain).toBe('lark')
       expect(config.gateway.channels[0]?.proactiveTarget).toBeUndefined()
     } finally {

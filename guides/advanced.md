@@ -174,3 +174,15 @@ pnpm pack --dry-run
 ```
 
 The package builds against published dsh interfaces and does not require a dsh source checkout.
+
+## Approvals and user questions
+
+In the Feishu app's Events & Callbacks → Callback Configuration, select persistent-connection delivery and subscribe to the new `card.action.trigger` callback. Apply the configuration and restart the service after updating the plugin. Subscribing only to `im.message.receive_v1` receives chat messages but does not deliver card answers.
+
+Operation approvals use a separate Allow once / Reject card showing the tool, reason and available original call arguments. If the specified call's arguments cannot be found, no approval prompt is offered. Grants apply only to that operation. The plugin does not override dsh's `never` approval policy, which rejects without prompting.
+
+`ask_user_question` supports single and multiple selections plus custom text. Plan reviews show the complete plan and its original options. Submitting sends structured answers to the waiting tool. Cancel, task stop, service shutdown and timeout end the wait. Incomplete or invalid submissions refresh the card for correction. The standard dsh Agent preset provides the question tool; custom presets must retain the corresponding tool and service.
+
+Cards appear in the execution card's topic and can be answered only by the user who started the current task, without another mention. Callbacks validate channel, chat, card ID and user ID. Duplicate and expired clicks cannot grant another approval. dsh records decisions through its approval audit or tool results, and settled cards show their final status. Even if a card update fails, its old buttons no longer work. Pending requests do not survive a restart.
+
+Set `gateway.interaction_timeout_ms` to change the wait limit; the default is `600000` (ten minutes). Scheduled turns without a current initiating user do not create prompts that arbitrary chat members could approve. Without another answerer, dsh reports unavailable approval or a failed question according to its own rules.

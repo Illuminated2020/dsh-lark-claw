@@ -8,7 +8,7 @@ import {
   type NormalizedMessage,
   type SendOptions,
 } from '@larksuiteoapi/node-sdk'
-import type { FeishuMessage, FeishuResource, FeishuSendOptions, FeishuTarget, FeishuTransport, FeishuTransportConfig, FeishuTransportFactory } from './types.ts'
+import type { FeishuCardAction, FeishuMessage, FeishuResource, FeishuSendOptions, FeishuTarget, FeishuTransport, FeishuTransportConfig, FeishuTransportFactory } from './types.ts'
 
 interface RawMessageResponse {
   readonly data?: {
@@ -58,6 +58,16 @@ export class LarkFeishuTransport implements FeishuTransport {
 
   constructor(channelId: string, private readonly channel: LarkChannel) {
     this.channelId = channelId
+  }
+
+  onCardAction(handler: (action: FeishuCardAction) => void): () => void {
+    return this.channel.on('cardAction', event => {
+      const raw = event.raw
+      const action = typeof raw === 'object' && raw !== null && 'action' in raw ? raw.action : undefined
+      const formValue = typeof action === 'object' && action !== null && 'form_value' in action ? action.form_value : undefined
+      handler({ messageId: event.messageId, chatId: event.chatId, userId: event.operator.openId,
+        value: event.action.value, formValue })
+    })
   }
 
   onMessage(handler: (message: FeishuMessage) => void | Promise<void>): () => void {
@@ -207,6 +217,7 @@ export class LarkFeishuTransportFactory implements FeishuTransportFactory {
       appSecret: config.appSecret,
       domain: config.domain === 'lark' ? Domain.Lark : Domain.Feishu,
       transport: 'websocket',
+      includeRawEvent: true,
       source: 'dsh-lark-claw-gateway',
       policy: {
         ...config.policy?.groupAllowlist === undefined ? {} : { groupAllowlist: [...config.policy.groupAllowlist] },
