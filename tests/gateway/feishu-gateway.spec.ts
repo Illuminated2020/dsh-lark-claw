@@ -629,7 +629,80 @@ describe('Feishu Gateway', () => {
     expect(transport.cards[0]?.target).toEqual({ chatId: 'cron-chat' })
     expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('automatically triggered')
     expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('检查服务状态')
+    expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('Gateway owns delivery')
+    expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('Do not use lark-cli')
     expect(transport.updates.length).toBeGreaterThan(0)
+  })
+
+  it.each(['new', 'legacy-replied', 'legacy-reset'])('keeps scheduled topic roots across turns, restart and reset (%s)', async (mode) => {
+    const legacy = mode !== 'new'
+    const state = memoryState()
+    const config = {
+      workspace: '/tmp/dsh-lark-claw-test',
+      channels: [{ id: 'main', appId: 'cli_test', appSecretEnv: 'FEISHU_SECRET' }],
+    }
+    const start = async (h: Harness) => {
+      const gateway = await startFeishuGateway(h.ctx, config, { create: config => {
+        const transport = new FakeTransport(config.channelId, config)
+        h.transports.set(config.channelId, transport)
+        return transport
+      } })
+      gateways.push(gateway)
+      return gateway
+    }
+    const first = harness(state)
+    const gateway = await start(first)
+    const result = await gateway.runScheduledTask({
+      schedulerId: 'root-regression', instruction: '生成简报', sessionId: null, target: { chatId: 'cron-chat' },
+    })
+    const rootId = result.messageId!
+    const threadId = result.threadId!
+    if (legacy) {
+      const oldTransport = first.transports.get('main')!
+      oldTransport.emit(message({ messageId: 'legacy-followup', chatId: 'cron-chat', threadId,
+        rootId, replyToMessageId: rootId, content: '第一次追问' }))
+      await eventually(() => first.agents[0]?.followed.length === 2)
+      expect(state.tables.get('threads')!.get(`main:${threadId}`).cardMessageId).not.toBe(rootId)
+    }
+    await gateway.close()
+    if (legacy) {
+      const record = state.tables.get('threads')!.get(`main:${threadId}`)
+      delete record.topicRootMessageId
+      if (mode === 'legacy-reset') delete record.cardMessageId
+    }
+    const second = harness(state)
+    const resumed = await start(second)
+    const transport = second.transports.get('main')!
+    transport.getMessageResources.mockRejectedValue(new Error('Request failed with status code 400'))
+    const followup = (messageId: string, content: string) => message({
+      messageId, content, chatId: 'cron-chat', threadId, rootId, replyToMessageId: rootId,
+    })
+    for (const [i, content] of ['你有哪些定时任务', '继续'].entries()) {
+      transport.emit(followup(`followup-${i}`, content))
+      await eventually(() => second.agents[0]?.followed.length === i + 1)
+      expect.soft(transport.getMessageResources).not.toHaveBeenCalled()
+      expect.soft(second.agents[0]!.followed[i].content).toEqual([{ type: 'text', text: content }])
+      expect(state.tables.get('threads')!.get(`main:${threadId}`).topicRootMessageId).toBe(rootId)
+    }
+    expect(second.resumes).toEqual([result.sessionId])
+    transport.emit(followup('reset-root', '/reset'))
+    await eventually(() => transport.texts.length === 1)
+    await resumed.close()
+    const third = harness(state)
+    await start(third)
+    const afterReset = third.transports.get('main')!
+    afterReset.getMessageResources.mockRejectedValue(new Error('Request failed with status code 400'))
+    afterReset.emit(followup('after-reset-root', '重置后继续'))
+    await eventually(() => third.agents[0]?.followed.length === 1)
+    expect(afterReset.getMessageResources).not.toHaveBeenCalled()
+    expect(third.agents[0]!.followed[0].content).toEqual([{ type: 'text', text: '重置后继续' }])
+    afterReset.emit({ ...followup('explicit-child', '读取文件'), replyToMessageId: 'attachment-child' })
+    await eventually(() => third.agents[0]?.followed.length === 2)
+    expect(afterReset.getMessageResources).toHaveBeenCalledWith('attachment-child', 'cron-chat')
+    afterReset.emit({ ...followup('unknown-root-message', '读取另一条消息'), rootId: 'unknown-root', replyToMessageId: 'unknown-root' })
+    await eventually(() => third.agents[0]?.followed.length === 3)
+    expect(afterReset.getMessageResources).toHaveBeenCalledWith('unknown-root', 'cron-chat')
+    expect(state.tables.get('threads')!.get(`main:${threadId}`).topicRootMessageId).toBe(rootId)
   })
 
   it('admits images natively and saves other media to workspace uploads without saveFile', async () => {

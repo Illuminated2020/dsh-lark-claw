@@ -20,6 +20,7 @@ const threadRecord = z.object({
   sessionId,
   workspace: z.string().min(1),
   cardMessageId: z.string().min(1).optional(),
+  topicRootMessageId: z.string().min(1).optional(),
   updatedAt: z.number().int().nonnegative(),
 })
 

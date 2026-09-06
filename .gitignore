@@ -8,5 +8,6 @@ lib/
 *.tsbuildinfo
 
 # Local development notes
-/docs/
+/docs/*
+!/docs/architecture.md
 /AGENTS.md

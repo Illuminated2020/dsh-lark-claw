@@ -200,6 +200,8 @@ export interface FeishuThreadRecord {
   readonly chatId: string
   readonly sessionId: SessionId
   readonly workspace: string
+  /** Stable topic root, created by the gateway or learned from a legacy conversation. */
+  readonly topicRootMessageId?: string | undefined
   readonly cardMessageId?: string | undefined
   readonly updatedAt: number
 }

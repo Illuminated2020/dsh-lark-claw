@@ -601,8 +601,15 @@ export class FeishuGateway implements FeishuGatewayService {
 
     let runtime: RuntimeThread | undefined
     try {
+      // Capture the durable route before ensureThread can create one for an unknown topic.
+      const established = this.threadTable().get(key)
+      const legacyTopic = established !== undefined
+        && established.channelId === channelId && established.chatId === message.chatId
+        && established.threadId === message.threadId && established.topicRootMessageId === undefined
+        && (established.cardMessageId !== undefined || [...this.messageTable().entries()].some(([, prior]) =>
+          prior.channelId === channelId && prior.threadKey === key))
       runtime = await this.ensureThread(channel.config, message, key)
-      const blocks = await this.admitResources(channelId, channel.transport, message)
+      const blocks = await this.admitResources(channelId, channel.transport, message, runtime, legacyTopic)
       await this.messageTable().put(messageKey(channelId, message.messageId), {
         channelId,
         messageId: message.messageId,
@@ -742,6 +749,8 @@ export class FeishuGateway implements FeishuGatewayService {
     const scheduleLine = request.scheduleDescription === undefined ? '' : `\n> Schedule: ${request.scheduleDescription}`
     const framed = [
       '> This message was automatically triggered by a scheduled task.',
+      '> Gateway owns delivery of the final response to the configured destination. Return the task result as your final response.',
+      '> Do not use lark-cli or other messaging tools to deliver this result again, and do not redirect it to another chat. Report delivery problems instead.',
       `> Triggered at: ${new Date().toISOString()}`,
       `> Scheduler ID: \`${request.schedulerId}\`${scheduleLine}`,
       '',
@@ -783,6 +792,8 @@ export class FeishuGateway implements FeishuGatewayService {
     channelId: string,
     transport: FeishuTransport,
     message: FeishuMessage,
+    runtime: RuntimeThread,
+    legacyTopic: boolean,
   ): Promise<ContentBlock[]> {
     const blocks = await this.admitMessageResources(transport, message)
     const parentId = message.replyToMessageId
@@ -795,6 +806,22 @@ export class FeishuGateway implements FeishuGatewayService {
       ? this.messageTable().get(messageKey(channelId, parentId))
       : undefined
     if (parent !== undefined) return blocks
+    const record = runtime.record
+    if (message.rootId === parentId
+      && message.threadId === record.threadId
+      && message.chatId === record.chatId
+      && channelId === record.channelId
+      && (record.topicRootMessageId === parentId
+        || (record.topicRootMessageId === undefined && (record.cardMessageId === parentId || legacyTopic)))) {
+      // Feishu identifies the root of this already established conversation even
+      // when an older gateway has overwritten its card anchor. Learn it once;
+      // unknown topics and non-root replies still go through attachment lookup.
+      if (record.topicRootMessageId === undefined) {
+        runtime.record = { ...record, topicRootMessageId: parentId, updatedAt: Date.now() }
+        await this.threadTable().put(runtime.key, runtime.record)
+      }
+      return blocks
+    }
     let resources: FeishuMessage['resources']
     try {
       resources = await transport.getMessageResources(parentId, message.chatId)
@@ -874,9 +901,12 @@ export class FeishuGateway implements FeishuGatewayService {
     if (threadId === undefined) return
     const nextKey = threadKey(channelId, threadId)
     const previousKey = runtime.key
+    const sameTopic = runtime.record.channelId === channelId
+      && runtime.record.chatId === chatId && runtime.record.threadId === threadId
     runtime.key = nextKey
     runtime.record = {
       ...runtime.record,
+      topicRootMessageId: sameTopic ? runtime.record.topicRootMessageId : undefined,
       channelId,
       threadId,
       chatId,
@@ -921,7 +951,13 @@ export class FeishuGateway implements FeishuGatewayService {
     const initial = await transport.sendCard(live.target, await this.renderCard(transport, live.latest), live.replyOptions)
     live.messageId = initial.messageId
     await this.bindReplyThread(runtime, transport.channelId, target.chatId, initial.threadId)
-    runtime.record = { ...runtime.record, cardMessageId: initial.messageId, updatedAt: Date.now() }
+    runtime.record = {
+      ...runtime.record,
+      ...(target.threadId === undefined && replyOptions.replyTo === undefined
+        ? { topicRootMessageId: initial.messageId } : {}),
+      cardMessageId: initial.messageId,
+      updatedAt: Date.now(),
+    }
     await this.threadTable().put(runtime.key, runtime.record)
     let streamedText = ''
     let usesLiveStream = false
