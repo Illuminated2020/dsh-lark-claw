@@ -749,8 +749,7 @@ export class FeishuGateway implements FeishuGatewayService {
     const scheduleLine = request.scheduleDescription === undefined ? '' : `\n> Schedule: ${request.scheduleDescription}`
     const framed = [
       '> This message was automatically triggered by a scheduled task.',
-      '> Gateway owns delivery of the final response to the configured destination. Return the task result as your final response.',
-      '> Do not use lark-cli or other messaging tools to deliver this result again, and do not redirect it to another chat. Report delivery problems instead.',
+      '> Return the complete task result directly as your final response. Do not call any messaging tool.',
       `> Triggered at: ${new Date().toISOString()}`,
       `> Scheduler ID: \`${request.schedulerId}\`${scheduleLine}`,
       '',

@@ -629,8 +629,9 @@ describe('Feishu Gateway', () => {
     expect(transport.cards[0]?.target).toEqual({ chatId: 'cron-chat' })
     expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('automatically triggered')
     expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('检查服务状态')
-    expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('Gateway owns delivery')
-    expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('Do not use lark-cli')
+    expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('Return the complete task result directly as your final response. Do not call any messaging tool.')
+    expect(h.agents[0]?.followed[0]?.content[0]?.text).not.toContain('Gateway owns delivery')
+    expect(h.agents[0]?.followed[0]?.content[0]?.text).not.toContain('redirect')
     expect(transport.updates.length).toBeGreaterThan(0)
   })
 
