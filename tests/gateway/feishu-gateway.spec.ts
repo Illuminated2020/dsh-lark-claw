@@ -10,7 +10,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import { renderContextSnapshot, type PromptContext } from '@deepseek-ai/dsh-system-prompt'
+import type { Agent, AgentHandle, AgentSetup } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { Config, startFeishuGateway } from '../../src/gateway/index.ts'
 import type {
@@ -139,6 +140,11 @@ class FakeTransport implements FeishuTransport {
 }
 
 class FakeAgent {
+  readonly promptContexts: PromptContext[] = []
+  readonly promptVariables: Record<string, string> = {}
+  deliveryContext(): string {
+    return renderContextSnapshot({ sections: [], contexts: this.promptContexts.map(c => ({ name: c.name, text: c.text as string })), variables: this.promptVariables, tools: [] })
+  }
   readonly session: any
   readonly followed: any[] = []
   status: 'idle' | 'running' = 'idle'
@@ -225,8 +231,12 @@ function harness(state = memoryState(), withAttachments = false, turnGate?: Prom
   const emit = (event: string, ...payload: unknown[]): void => {
     for (const handler of eventHandlers.get(event) ?? []) handler(...payload)
   }
-  const makeAgent = (id: SessionId): AgentHandle => {
+  const makeAgent = async (id: SessionId, setup?: AgentSetup): Promise<AgentHandle> => {
     const agent = new FakeAgent(id, emit, state.persistedSessions, turnGate)
+    await setup?.({ systemPrompt: {
+      variable: (name: string, provider: () => string) => { agent.promptVariables[name] = provider() },
+      context: (context: PromptContext) => { agent.promptContexts.push(context) },
+    } } as unknown as Context)
     agents.push(agent)
     return {
       agent: agent as unknown as Agent,
@@ -246,10 +256,10 @@ function harness(state = memoryState(), withAttachments = false, turnGate?: Prom
       flush: async () => undefined,
     },
     agents: {
-      create: async ({ sessionId }: { sessionId: SessionId }) => { creates.push(sessionId); return makeAgent(sessionId) },
-      resume: async ({ resumeSessionId }: { resumeSessionId: SessionId }) => {
+      create: async ({ sessionId, setup }: { sessionId: SessionId; setup?: AgentSetup }) => { creates.push(sessionId); return makeAgent(sessionId, setup) },
+      resume: async ({ resumeSessionId, setup }: { resumeSessionId: SessionId; setup?: AgentSetup }) => {
         resumes.push(resumeSessionId)
-        return makeAgent(resumeSessionId)
+        return makeAgent(resumeSessionId, setup)
       },
     },
     commands: {
@@ -544,6 +554,8 @@ describe('Feishu Gateway', () => {
     expect(second.transports.get('main')!.cards[0]?.options).toEqual({ replyTo: 'card-main-1', replyInThread: true })
     second.transports.get('main')!.emit(message({ messageId: 'message-after-restart', threadId: 'thread-restart' }))
     await eventually(() => second.agents[0]?.followed.length === 2)
+    expect(second.agents[0]!.deliveryContext()).toContain('[文件说明](相对路径)')
+    expect(second.agents[0]!.promptContexts).toHaveLength(1)
     expect(second.resumes[0]).toBe(first.creates[0])
     expect(second.creates).toHaveLength(0)
   })
@@ -627,6 +639,8 @@ describe('Feishu Gateway', () => {
     const transport = h.transports.get('main')!
     expect(result.sessionId).toBe(h.creates[0])
     expect(transport.cards[0]?.target).toEqual({ chatId: 'cron-chat' })
+    expect(h.agents[0]!.deliveryContext()).toContain('当前会话的工作目录为 `/tmp/dsh-lark-claw-test`')
+    expect(h.agents[0]!.deliveryContext()).toContain('![图片说明](相对路径)')
     expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('automatically triggered')
     expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('检查服务状态')
     expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('Return the complete task result directly as your final response. Do not call any messaging tool.')
@@ -857,6 +871,7 @@ describe('Feishu Gateway', () => {
 
     expect(transport.getMessageResources).not.toHaveBeenCalled()
     expect(h.agents[1]!.followed[0].content).toEqual([{ type: 'text', text: '重置后的普通续聊' }])
+    expect(h.agents[1]!.deliveryContext()).toContain('你生成的交付文件应保存在该目录或其子目录中')
   })
 
   it('enforces source allowlists independently per Channel', async () => {

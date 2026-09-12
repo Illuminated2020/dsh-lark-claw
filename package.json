@@ -1,6 +1,6 @@
 {
   "name": "dsh-lark-claw",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A standalone Lark/Feishu gateway and persistent cron bundle for DeepSeek Harness",
   "keywords": [
     "deepseek-harness",
@@ -94,6 +94,7 @@
     "@deepseek-ai/dsh-session": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-session-persistence": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-storage-domain": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-user-approval": "0.1.2-rc.1",
     "@deepseek-ai/dsh-user-questions": "0.1.2-rc.1"
@@ -106,6 +107,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1",
     "@deepseek-ai/dsh-user-approval": "0.1.2-rc.1",
     "@deepseek-ai/dsh-user-questions": "0.1.2-rc.1",
     "@types/node": "^22.20.0",

@@ -33,6 +33,8 @@ dsh-lark-claw 是独立的 DeepSeek Harness Bundle，通过 Cordis 将飞书/Lar
 
 ## 文件输入
 
+网关在创建或恢复 Agent 的 `setup` 中，通过公开的 `systemPrompt.context` 注册 `feishu:delivery` 上下文，仅作用于该 Agent。普通对话、定时任务和 `/reset` 创建的新会话共用此入口。上下文说明实际工作目录、图片 Markdown 和文件链接的交付写法，不包含上传实现细节；工作目录通过提示词变量填入。宿主负责组装与去重上下文快照，网关不把说明重复拼入用户消息。该能力依赖宿主启用 runtime context。
+
 接收附件时，通过原消息 ID 和资源 key 调用 `im.v1.messageResource.get`，适用于图片消息及富文本消息中的图片。图片使用 dsh 原生 image block。普通文件、音频和视频保存在 `<workspace>/uploads`，通过绝对路径交给 Agent；具体格式能否解析取决于可用工具。上传文件持续保留，便于恢复会话后读取，插件不自动删除历史上传。
 
 单个附件下载或保存失败时，原文、失败说明和其他成功附件仍进入同一条 dsh 用户消息，由 Session 记录，供当前及后续回合解释。失败附件不会生成 image block 或文件路径；网关不会重放整个消息。

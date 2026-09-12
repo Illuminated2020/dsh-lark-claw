@@ -11,6 +11,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import z from '@deepseek-ai/schemastery'
@@ -50,6 +51,7 @@ export const name = 'feishu-gateway'
 /** Runtime services required by the coordinator. */
 export const inject = [
   'agents',
+  'systemPrompt',
   'attachments',
   'commands',
   'credentials',
@@ -782,9 +784,20 @@ export class FeishuGateway implements FeishuGatewayService {
       ...this.config.provider === undefined ? {} : { provider: this.config.provider },
       ...this.config.model === undefined ? {} : { model: this.config.model },
     }
+    const setup = (agentCtx: Context): void => {
+      agentCtx.systemPrompt.variable('feishu_delivery_workspace', () => resolve(this.config.workspace))
+      agentCtx.systemPrompt.context({
+        name: 'feishu:delivery',
+        order: 1000,
+        text: [
+          '当前会话的工作目录为 `{{feishu_delivery_workspace}}`。你生成的交付文件应保存在该目录或其子目录中。',
+          '在最终回复中，使用 `![图片说明](相对路径)` 向用户展示图片，使用 `[文件说明](相对路径)` 向用户提供文件附件。路径相对于上述工作目录解析，也支持该目录内的绝对路径。',
+        ].join('\n'),
+      })
+    }
     return !persisted
-      ? this.ctx.agents.create({ sessionId, meta: { cwd: this.config.workspace }, agentOptions })
-      : this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions })
+      ? this.ctx.agents.create({ sessionId, meta: { cwd: this.config.workspace }, agentOptions, setup })
+      : this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup })
   }
 
   private async admitResources(
