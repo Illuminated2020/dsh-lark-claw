@@ -3,6 +3,12 @@
 import type { ImageBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'feishu-cron': { kind: 'feishu-cron' }
+  }
+}
+
 /** One resource normalized by the Feishu transport. */
 export interface FeishuResource {
   readonly type: 'image' | 'file' | 'audio' | 'video'
