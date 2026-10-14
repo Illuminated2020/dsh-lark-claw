@@ -8,6 +8,8 @@ The optional field accepts old records. Before creating a route for an inbound m
 
 Scheduled turns ask the model to return the result as its final response for gateway delivery, without using lark-cli or other messaging tools to send it again or redirect it. This is a model instruction, not tool isolation. An unreachable destination remains a delivery error.
 
+Scheduled messages use the producer-owned source `{ kind: 'feishu-cron' }`, declared through dsh's merge-extensible `MessageSourceMap`. This works with the minimum supported dsh and with the V4 Session format, which refuses the retired `{ kind: 'plugin', plugin: 'feishu-cron' }` wrapper. A rejected batch remains buffered and can make later service-wide flushes fail in other conversations. Flush failures are rethrown, with aggregate members and causes included in the gateway log through dsh's `errorChain` helper.
+
 dsh-lark-claw 是独立的 DeepSeek Harness Bundle，通过 Cordis 将飞书/Lark 接入 dsh Agent，无需修改宿主源码。
 
 ## 模块职责
