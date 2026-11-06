@@ -9,7 +9,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { adoptSessionEvent, decodeStorageRecord, SessionId } from '@deepseek-ai/dsh-session'
 import { renderContextSnapshot, type PromptContext } from '@deepseek-ai/dsh-system-prompt'
 import type { Agent, AgentHandle, AgentSetup } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
@@ -646,7 +646,30 @@ describe('Feishu Gateway', () => {
     expect(h.agents[0]?.followed[0]?.content[0]?.text).toContain('Return the complete task result directly as your final response. Do not call any messaging tool.')
     expect(h.agents[0]?.followed[0]?.content[0]?.text).not.toContain('Gateway owns delivery')
     expect(h.agents[0]?.followed[0]?.content[0]?.text).not.toContain('redirect')
+    const scheduledMessage = h.agents[0]!.followed[0]
+    expect(scheduledMessage.source).toEqual({ kind: 'feishu-cron' })
+    const stored = adoptSessionEvent({ type: 'user/message', seq: 0, time: Date.now(), data: scheduledMessage })
+    expect(decodeStorageRecord(JSON.parse(JSON.stringify(stored)))).toEqual([stored])
     expect(transport.updates.length).toBeGreaterThan(0)
+  })
+
+  it('logs nested persistence failures and rejects the scheduled turn', async () => {
+    const h = harness()
+    const failure = new AggregateError([
+      new Error('session write failed', { cause: new Error('invalid message source') }),
+    ], 'session-persistence-jsonl flush failed')
+    h.ctx.sessionPersistence.flush = vi.fn().mockRejectedValue(failure)
+    const gateway = await startFeishuGateway(h.ctx, {
+      workspace: '/tmp/dsh-lark-claw-test',
+      channels: [{ id: 'main', appId: 'cli_test', appSecretEnv: 'FEISHU_SECRET' }],
+    }, { create: config => new FakeTransport(config.channelId, config) })
+    gateways.push(gateway)
+    await expect(gateway.runScheduledTask({
+      schedulerId: 'flush-failure', instruction: '检查服务状态', sessionId: null, target: { chatId: 'cron-chat' },
+    })).rejects.toBe(failure)
+    expect(h.ctx.logger.warn).toHaveBeenCalledWith(
+      'feishu-gateway persistence flush failed: session-persistence-jsonl flush failed [session write failed: invalid message source]',
+    )
   })
 
   it.each(['new', 'legacy-replied', 'legacy-reset'])('keeps scheduled topic roots across turns, restart and reset (%s)', async (mode) => {

@@ -4,7 +4,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, ImageBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { parseCommand } from '@deepseek-ai/dsh-commands'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -387,7 +387,13 @@ async function hasPersistedSession(ctx: Context, sessionId: SessionId): Promise<
 
 async function flushPersistence(ctx: Context): Promise<void> {
   const flush = (ctx.sessionPersistence as unknown as SessionPersistenceCompat).flush
-  if (flush !== undefined) await flush.call(ctx.sessionPersistence)
+  if (flush === undefined) return
+  try {
+    await flush.call(ctx.sessionPersistence)
+  } catch (error) {
+    ctx.logger.warn(`feishu-gateway persistence flush failed: ${errorChain(error)}`)
+    throw error
+  }
 }
 
 /** The Gateway owns routing and external projection, while dsh owns execution. */
@@ -759,7 +765,7 @@ export class FeishuGateway implements FeishuGatewayService {
     ].join('\n')
     const userMessage = createUserMessage({
       content: [{ type: 'text', text: framed }],
-      source: { kind: 'plugin', plugin: 'feishu-cron' },
+      source: { kind: 'feishu-cron' },
     })
     // Prefer the persisted message anchor for an existing conversation. Only
     // configured topics without a known card need a transport history lookup.
